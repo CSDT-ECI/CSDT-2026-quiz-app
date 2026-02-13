@@ -14,6 +14,15 @@
 
 ---
 
+## 👥 Equipo
+
+| | |
+| :--- | :--- |
+| **Nombre del equipo** | Anti-Spaghetti-Squad |
+| **Integrantes** | Jairo Andrés Jimenez<br>Edgar Ricardo Alvarez<br>Juliana Briceño Castro |
+
+---
+
 ## 📑 Índice
 
 1. [Olores de código y malas prácticas](#-1-olores-de-código-y-malas-prácticas)
