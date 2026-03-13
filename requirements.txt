@@ -31,3 +31,6 @@ urllib3==1.25.8
 webencodings==0.5.1
 Werkzeug==2.0.2
 WTForms==3.0.0
+pytest==7.4.3
+pytest-cov==4.1.0
+mongomock==4.3.0
