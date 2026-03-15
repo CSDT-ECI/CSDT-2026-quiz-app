@@ -349,6 +349,119 @@
 
 ---
 
+## 🧪 5. Deuda Técnica en Pruebas
+
+### 5.1 Estado inicial del testing
+
+Al inicio del análisis, el proyecto contaba con **8 tests** exclusivamente de tipo *smoke test* que verificaban códigos HTTP (200/302) sin validar lógica de negocio, datos de respuesta ni flujos completos.
+
+| Métrica | Valor inicial |
+| :------ | :-----------: |
+| Tests totales | 8 |
+| Cobertura de líneas | **5.8%** (29/499) |
+| Cobertura de branches | **0%** (0/98) |
+| Tests de lógica de negocio | 0 |
+| Tests de funciones puras | 0 |
+| Tests de seguridad/decorators | 0 |
+
+---
+
+### 5.2 Prácticas de Testing Debt identificadas
+
+| # | Práctica de Testing Debt | Evidencia en el proyecto | Impacto |
+| :-: | :---------------------- | :----------------------- | :------ |
+| 1 | **Ausencia total de tests unitarios para lógica de negocio** | Funciones críticas como `nilai()` (cálculo de puntaje), `add_account()` (registro), `api_login()` (autenticación) no tenían ningún test. | Cualquier cambio en estas funciones podría romper funcionalidad sin ser detectado. |
+| 2 | **Tests superficiales (smoke tests only)** | Los 8 tests existentes solo verificaban `response.status_code == 200`. No validaban el contenido de las respuestas, datos JSON, ni efectos en la base de datos. | Falsa sensación de seguridad: los tests pasan pero no detectan bugs reales. |
+| 3 | **Sin tests de funciones puras** | `generate_code()`, `generate_password()`, `check_password()`, `json_decoder()` — funciones deterministas y fácilmente testeables — no tenían tests. | Las funciones más fáciles de testear eran las más descuidadas. |
+| 4 | **Sin tests de seguridad** | Decoradores `login_required` y `admin_required` no estaban testeados. No se verificaba que rutas protegidas rechazaran usuarios no autenticados. | Vulnerabilidades de acceso podrían pasar desapercibidas. |
+| 5 | **Sin tests de edge cases** | No había tests para inputs inválidos, campos faltantes, archivos malformados, usuarios duplicados, contraseñas incorrectas, etc. | Los caminos de error nunca se verificaban. |
+| 6 | **Cobertura de branches en 0%** | Ninguna rama condicional (`if/else`) estaba cubierta por tests. | Las decisiones lógicas del código nunca se ejecutaban en tests. |
+| 7 | **Dependencia frágil del mock de MongoDB** | El `conftest.py` original parcheaba `os.environ` pero no la config de Flask, causando `RuntimeError: MONGODB_URI not found` en todos los tests que requerían la app. | Los tests existentes probablemente nunca se ejecutaron con éxito en CI. |
+
+---
+
+### 5.3 Ejemplos concretos de testing debt
+
+#### Ejemplo 1: Función `nilai()` sin tests — Cálculo de puntaje no verificado
+
+```python
+# app/api/quiz.py — línea 58
+@api.route('/quiz/nilai/<code>', methods=['POST'])
+def nilai(code):
+    # ... 40 líneas de lógica que mezclan parsing, cálculo y persistencia
+    perfect_value = 100
+    per_true = perfect_value/len(data_check)
+    fix_value = round(len(list_true) * per_true)
+```
+
+**Problema**: Esta función calcula el puntaje de un quiz. Un error en la lógica de comparación de respuestas o en el cálculo del porcentaje afectaría directamente la calificación de los usuarios, y no existía ningún test que verificara que `100` se retornara para respuestas correctas o `50` para mitad correctas.
+
+#### Ejemplo 2: Decorator `login_required` sin verificación
+
+```python
+# app/modules/decorators.py
+def login_required(f):
+    @wraps(f)
+    def function(*args, **kwargs):
+        if not session.get('username'):
+            flash('login first ')
+            return redirect(url_for('auth.login_page'))
+        return f(*args, **kwargs)
+    return function
+```
+
+**Problema**: Si alguien modificara accidentalmente la clave de sesión (`'username'` → `'user'`), todas las rutas protegidas quedarían abiertas. Sin tests, este cambio pasaría inadvertido.
+
+#### Ejemplo 3: Registro de usuarios — Sin validación de duplicados testeada
+
+```python
+# app/api/views.py — línea 19
+@api.route('/add-account', methods=['POST'])
+def add_account():
+    # ... la validación de duplicados depende de ProfileForm.validate_username
+    # que hace db.users.find_one({'username':username.data})
+```
+
+**Problema**: La validación de username duplicado depende de que `ProfileForm` consulte la BD dentro de un validador. Sin tests, no se verificaba que registrar el mismo username dos veces retornara un error.
+
+---
+
+### 5.4 Tests implementados para reducir la deuda
+
+Se crearon **37 nuevos tests** distribuidos en 4 módulos:
+
+| Módulo | Tests | Qué cubren |
+| :----- | :---: | :--------- |
+| `tests/test_utils.py` | 14 | Funciones puras: `generate_code`, `generate_password`, `check_password`, `json_decoder` |
+| `tests/test_decorators.py` | 4 | Decoradores de autenticación y autorización |
+| `tests/test_api_views.py` | 9 | Endpoints de usuario: registro, login, perfil, contraseña |
+| `tests/test_api_quiz.py` | 10 | Endpoints de quiz: creación, preguntas, puntaje, scores |
+
+---
+
+### 5.5 Resultados después de la intervención
+
+| Métrica | Antes | Después | Mejora |
+| :------ | :---: | :-----: | :----: |
+| Tests totales | 8 | **45** | +462% |
+| Cobertura de líneas | 5.8% | **64%** | +58.2pp |
+| Cobertura de branches | 0% | **13%+** | Desde cero |
+| Archivos con 100% cobertura | 2 | **12** | +10 |
+
+---
+
+### 5.6 Deuda de testing remanente
+
+| Área | Descripción | Prioridad |
+| :--- | :---------- | :-------: |
+| `dashboard/views.py` (42%) | Vistas de dashboard con lógica de descarga, edición y eliminación de quizzes | Media |
+| `api/quiz.py` upload CSV/JSON | Flujos de carga de archivos con validación de formato | Media |
+| `api/quiz.py` search | Búsqueda por texto (requiere soporte de text index en mock) | Baja |
+| Tests de integración E2E | Flujos completos: registro → login → crear quiz → responder → ver scores | Alta |
+| Tests de frontend (JS) | `dashboard.js` y `script.js` no tienen tests | Media |
+
+---
+
 <div align="center">
 
 *Este documento puede actualizarse conforme se apliquen refactorizaciones o se detecten nuevos puntos de deuda técnica.*
