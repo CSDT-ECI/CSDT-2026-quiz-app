@@ -368,6 +368,8 @@ Al inicio del análisis, el proyecto contaba con **8 tests** exclusivamente de t
 
 ### 5.2 Prácticas de Testing Debt identificadas
 
+#### 5.2.1 Prácticas identificadas en la primera intervención (entrega anterior)
+
 | # | Práctica de Testing Debt | Evidencia en el proyecto | Impacto |
 | :-: | :---------------------- | :----------------------- | :------ |
 | 1 | **Ausencia total de tests unitarios para lógica de negocio** | Funciones críticas como `nilai()` (cálculo de puntaje), `add_account()` (registro), `api_login()` (autenticación) no tenían ningún test. | Cualquier cambio en estas funciones podría romper funcionalidad sin ser detectado. |
@@ -377,6 +379,18 @@ Al inicio del análisis, el proyecto contaba con **8 tests** exclusivamente de t
 | 5 | **Sin tests de edge cases** | No había tests para inputs inválidos, campos faltantes, archivos malformados, usuarios duplicados, contraseñas incorrectas, etc. | Los caminos de error nunca se verificaban. |
 | 6 | **Cobertura de branches en 0%** | Ninguna rama condicional (`if/else`) estaba cubierta por tests. | Las decisiones lógicas del código nunca se ejecutaban en tests. |
 | 7 | **Dependencia frágil del mock de MongoDB** | El `conftest.py` original parcheaba `os.environ` pero no la config de Flask, causando `RuntimeError: MONGODB_URI not found` en todos los tests que requerían la app. | Los tests existentes probablemente nunca se ejecutaron con éxito en CI. |
+
+#### 5.2.2 Prácticas de testing debt identificadas en la segunda intervención
+
+Tras la primera intervención se incrementó la cobertura a 70.54%. Sin embargo, el análisis de la suite resultante reveló nuevas prácticas de deuda de testing que persistían:
+
+| # | Práctica de Testing Debt | Evidencia en el proyecto | Impacto |
+| :-: | :---------------------- | :----------------------- | :------ |
+| 8 | **Tests con estado compartido (contaminación entre tests)** | `test_add_account_success` en `test_api_views.py` usa el username `testuser`, el mismo que inserta el fixture `registered_user` (con `autouse=True`). Al ejecutar la suite completa, el test falla porque el usuario ya existe en la BD mock. En aislamiento sí pasa. | Tests que pasan individualmente pero fallan en la suite completa generan falsa confianza e impiden detectar regresiones reales. |
+| 9 | **Cobertura nula del módulo `dashboard/views.py`** | `dashboard/views.py` tenía 46.94% de cobertura. Vistas críticas como `edit_quiz`, `delete_quiz`, `logout`, `download_quiz` no tenían ningún test. La lógica de autorización (¿puede el usuario editar este quiz?) nunca se verificaba. | Las vistas de dashboard son las más usadas por usuarios autenticados; un bug en autorización podría permitir que un usuario edite o elimine quizzes de otro. |
+| 10 | **Flujos de carga de archivos sin cobertura** | El endpoint `uploadCsv` en `api/quiz.py` tenía 0% de cobertura (líneas 148–205). Los flujos de CSV válido, CSV inválido, JSON válido, JSON inválido y archivo de extensión incorrecta nunca se ejecutaban en tests. | Este endpoint acepta entrada de usuario no confiable; un error en validación podría insertar datos malformados o causar errores en producción. |
+| 11 | **Rutas de administración sin cobertura de integración** | Las operaciones de admin (`manage_users`: delete, promote, unpromote) y las verificaciones de autorización de perfil (`edit_profile`, `change_password` con contraseña incorrecta) no tenían tests. | Operaciones destructivas (eliminar usuarios) sin tests de integración son un riesgo alto: un bug silencioso podría borrar usuarios legítimos. |
+| 12 | **Branches de autorización en vistas sin cubrir** | En `dashboard/views.py`, las ramas `edit_quiz` (acceso de admin vs. propietario vs. usuario ajeno) y `delete_quiz` (misma lógica) no tenían ningún test de branch. La cobertura de branches del módulo era 0%. | Verificar solo el camino feliz de una vista deja los paths de rechazo sin validación; regresiones en autorización no se detectarían. |
 
 ---
 
@@ -424,11 +438,52 @@ def add_account():
 
 **Problema**: La validación de username duplicado depende de que `ProfileForm` consulte la BD dentro de un validador. Sin tests, no se verificaba que registrar el mismo username dos veces retornara un error.
 
+#### Ejemplo 4 (segunda intervención): Contaminación entre tests — BD mock compartida
+
+```python
+# tests/conftest.py
+@pytest.fixture(autouse=True)          # ← se ejecuta en TODOS los tests
+def mock_mongodb():
+    ...
+
+@pytest.fixture
+def registered_user(app, sample_user_data):
+    # inserta {"username": "testuser", ...} en la BD mock
+    db.users.insert_one(user)
+    return sample_user_data
+
+# tests/test_api_views.py
+def test_add_account_success(client):
+    # intenta registrar {"username": "testuser", ...} — ya existe!
+    response = client.post("/api/add-account", data=json.dumps({
+        "username": "testuser", ...
+    }))
+    assert data["status"] == "success"  # ← FALLA cuando se corre con la suite completa
+```
+
+**Problema**: `mock_mongodb` aplica `autouse=True` (se inyecta en todos los tests) pero no limpia la BD entre tests. Si cualquier test que use `registered_user` corre antes de `test_add_account_success`, la BD ya tiene `testuser` y el test falla. Este es el patrón clásico de **test order dependency**: los tests no son idempotentes ni aislados.
+
+#### Ejemplo 5 (segunda intervención): Lógica de autorización de dashboard sin tests
+
+```python
+# app/dashboard/views.py — línea 76
+@dashboard.route('/edit-quiz/<code>')
+@login_required
+def edit_quiz(code):
+    check = json_decoder(quiz.find_one({'code': code}))
+    if check and (session.get('username') == check['author'] or session.get('type') == 1):
+        # ... renderizar formulario de edición
+        return render_template('dashboard/add-quizes.html', forms=forms)
+    abort(403)  # ← esta rama nunca se ejecutaba en tests
+```
+
+**Problema**: La rama `abort(403)` — que protege el quiz de ser editado por un usuario que no es el autor ni admin — nunca se cubría. Un usuario ajeno podría acceder al quiz si se introdujera un bug en la condición y no habría test que lo detectara.
+
 ---
 
 ### 5.4 Tests implementados para reducir la deuda
 
-Se crearon **37 nuevos tests** distribuidos en 4 módulos:
+#### 5.4.1 Primera intervención — 37 tests nuevos
 
 | Módulo | Tests | Qué cubren |
 | :----- | :---: | :--------- |
@@ -437,16 +492,39 @@ Se crearon **37 nuevos tests** distribuidos en 4 módulos:
 | `tests/test_api_views.py` | 9 | Endpoints de usuario: registro, login, perfil, contraseña |
 | `tests/test_api_quiz.py` | 10 | Endpoints de quiz: creación, preguntas, puntaje, scores |
 
+#### 5.4.2 Segunda intervención — 39 tests nuevos
+
+Se crearon **3 nuevos módulos de test** para cubrir las áreas con mayor deuda remanente:
+
+| Módulo | Tests | Qué cubren |
+| :----- | :---: | :--------- |
+| `tests/test_dashboard_views.py` | 18 | Vistas de dashboard: autenticación, edición/eliminación de quiz, autorización por rol, logout, rutas duplicadas |
+| `tests/test_upload_csv.py` | 8 | Carga de archivos CSV y JSON: formato válido, campos faltantes, extensión incorrecta, sin archivo |
+| `tests/test_api_admin.py` | 13 | Operaciones admin: delete/promote/unpromote, cambio de contraseña, edición de perfil, visualización de quiz, flujos de error |
+
+**Áreas específicamente cubiertas por primera vez:**
+- `edit_quiz` con usuario propietario ✅, usuario ajeno (403) ✅, admin ✅
+- `delete_quiz` con código existente y no existente ✅
+- `logout` con verificación de sesión borrada ✅
+- `uploadCsv` con CSV válido, CSV inválido, JSON válido, JSON inválido ✅
+- `manage_users` (delete, promote, unpromote) ✅
+- `change_password` con contraseña correcta e incorrecta ✅
+- `edit_profile` con email duplicado ✅
+- `nilai` para quiz inexistente ✅
+
 ---
 
-### 5.5 Resultados después de la intervención
+### 5.5 Resultados después de cada intervención
 
-| Métrica | Antes | Después | Mejora |
-| :------ | :---: | :-----: | :----: |
-| Tests totales | 8 | **45** | +462% |
-| Cobertura de líneas | 5.8% | **64%** | +58.2pp |
-| Cobertura de branches | 0% | **13%+** | Desde cero |
-| Archivos con 100% cobertura | 2 | **12** | +10 |
+| Métrica | Inicial | 1ª intervención | 2ª intervención |
+| :------ | :-----: | :-------------: | :-------------: |
+| Tests totales | 8 | 45 | **84** |
+| Cobertura de líneas | 5.8% | 70.54% | **90%** |
+| Cobertura de branches | 0% | 29.59% | **~84%** |
+| Archivos con 100% cobertura | 2 | 12 | **16** |
+| `dashboard/views.py` cobertura | 0% | 46.94% | **85%** |
+| `api/quiz.py` cobertura | 0% | 57.72% | **85%** |
+| `api/views.py` cobertura | 0% | 63.83% | **90%** |
 
 ---
 
@@ -454,11 +532,11 @@ Se crearon **37 nuevos tests** distribuidos en 4 módulos:
 
 | Área | Descripción | Prioridad |
 | :--- | :---------- | :-------: |
-| `dashboard/views.py` (42%) | Vistas de dashboard con lógica de descarga, edición y eliminación de quizzes | Media |
-| `api/quiz.py` upload CSV/JSON | Flujos de carga de archivos con validación de formato | Media |
-| `api/quiz.py` search | Búsqueda por texto (requiere soporte de text index en mock) | Baja |
-| Tests de integración E2E | Flujos completos: registro → login → crear quiz → responder → ver scores | Alta |
-| Tests de frontend (JS) | `dashboard.js` y `script.js` no tienen tests | Media |
+| `test_add_account_success` — contaminación de BD | El fixture `registered_user` con `autouse=True` inserta `testuser` antes de que el test intente registrarlo. Solución: usar username único en el test o añadir limpieza de BD en `teardown`. | Alta |
+| `dashboard/views.py` — `download_quiz` | El endpoint de descarga usa una agregación de MongoDB que mongomock no soporta completamente. Requiere mock adicional o refactoring del endpoint. | Media |
+| `api/quiz.py` — búsqueda por texto | El endpoint `quiz_search` requiere índice de texto de MongoDB; mongomock tiene soporte limitado para `$text`. | Baja |
+| Tests de integración E2E | Flujos completos: registro → login → crear quiz → responder → ver scores con verificación end-to-end | Alta |
+| Tests de frontend (JS) | `dashboard.js` y `script.js` no tienen tests; el bug del operador `&` vs `&&` no está cubierto | Media |
 
 ---
 
