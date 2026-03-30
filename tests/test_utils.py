@@ -1,5 +1,6 @@
 """Tests for utility functions in app/modules/utils.py."""
 import string
+from datetime import datetime, timezone
 
 from bson import ObjectId
 
@@ -19,6 +20,13 @@ class TestGenerateCode:
     def test_custom_length(self):
         code = generate_code(10)
         assert len(code) == 10
+
+    def test_zero_length_returns_empty_string(self):
+        assert generate_code(0) == ""
+
+    def test_length_one_from_allowed_charset(self):
+        allowed = set(string.ascii_lowercase + string.digits)
+        assert generate_code(1) in allowed
 
     def test_only_lowercase_and_digits(self):
         allowed = set(string.ascii_lowercase + string.digits)
@@ -84,3 +92,19 @@ class TestJsonDecoder:
         data = {"user": {"_id": ObjectId(), "name": "test"}}
         result = json_decoder(data)
         assert result["user"]["name"] == "test"
+
+    def test_with_none(self):
+        assert json_decoder(None) is None
+
+    def test_with_empty_list(self):
+        assert json_decoder([]) == []
+
+    def test_with_empty_dict(self):
+        assert json_decoder({}) == {}
+
+    def test_with_datetime_uses_bson_extended_json(self):
+        dt = datetime(2020, 6, 15, 12, 30, 0, tzinfo=timezone.utc)
+        result = json_decoder({"created": dt})
+        assert "created" in result
+        assert isinstance(result["created"], dict)
+        assert "$date" in result["created"]

@@ -46,9 +46,14 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          python -m pytest --cov=app --cov-report=xml --cov-report=term -v
+          python -m pytest --cov=app --cov=server --cov-report=xml --cov-report=term -v
         env:
           MONGODB_URI: "mongodb://localhost"
+
+      # Cobertura from pytest-cov uses <source></source> + <source>app</source> and splits
+      # repo-root server.py from app/*; SonarCloud often fails to attach hits to server.py.
+      - name: Normalize coverage.xml for SonarCloud
+        run: python scripts/normalize_coverage_for_sonar.py coverage.xml
 
       - name: SonarCloud Scan
         # Pinned to v7.0.0 (full SHA satisfies supply-chain / Sonar rules)

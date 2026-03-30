@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from app import create_app
 from app.modules.utils import generate_password
 from flask_wtf.csrf import CSRFError
@@ -21,7 +21,7 @@ def seed_data():
             'full_name': 'Admin Web',
             'username': 'admin',
             'password': generate_password('admin1'),
-            'joined_at': datetime.utcnow(),
+            'joined_at': datetime.now(timezone.utc),
             'email': 'yourmail@gmail.com',
             'type': 1,
         }
@@ -38,5 +38,7 @@ with app.app_context():
 def error_csrf(e):
     return jsonify(status='fail', errors='CSRF Error, please refresh the page')
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=os.environ.get('PORT', 5000))
+if __name__ == "__main__":  # pragma: no cover
+    app.run(  # pragma: no cover
+        debug=True, host="0.0.0.0", port=os.environ.get("PORT", 5000)
+    )
