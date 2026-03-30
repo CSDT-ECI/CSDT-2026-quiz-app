@@ -81,6 +81,30 @@ def test_delete_quiz_nonexistent_code_redirects(logged_in_client):
     assert response.status_code == 302
 
 
+def test_delete_quiz_owner_removes_document(app, logged_in_client, registered_user):
+    """Owner delete should remove the quiz document (lines 113-115).
+
+    Uses a unique code: ``app.db`` is module singleton; other tests may leave ``test01`` rows.
+    """
+    from app.db import quiz as quiz_col
+
+    code = "del_owner_unique"
+    with app.app_context():
+        quiz_col.insert_one({
+            "code": code,
+            "author": registered_user["username"],
+            "quiz_title": "Delete me",
+            "data": [],
+        })
+        assert quiz_col.find_one({"code": code}) is not None
+
+    response = logged_in_client.get(f"/dashboard/delete-quiz/{code}")
+    assert response.status_code == 302
+
+    with app.app_context():
+        assert quiz_col.find_one({"code": code}) is None
+
+
 def test_edit_quiz_owner_can_access(logged_in_client, sample_quiz):
     """Quiz owner should be able to access the edit page."""
     response = logged_in_client.get(f"/dashboard/edit-quiz/{sample_quiz}")
@@ -116,3 +140,27 @@ def test_manage_users_accessible_by_admin(admin_client):
     """Admin should be able to access the manage users page."""
     response = admin_client.get("/dashboard/manage-users")
     assert response.status_code == 200
+
+
+def test_download_quiz_returns_json_attachment(logged_in_client, sample_quiz):
+    """download_quiz should return JSON with Content-Disposition (lines 29-49)."""
+    response = logged_in_client.get(f"/dashboard/quiz/download/{sample_quiz}")
+    assert response.status_code == 200
+    assert response.mimetype == "application/json"
+    disp = response.headers.get("Content-Disposition", "")
+    assert "attachment" in disp.lower()
+    assert sample_quiz in disp
+
+
+def test_export_quiz_existing_returns_response(logged_in_client, sample_quiz):
+    """export_quiz with existing code returns 200 (lines 149-154)."""
+    response = logged_in_client.get(f"/dashboard/export-quiz/{sample_quiz}")
+    assert response.status_code == 200
+    assert len(response.data) > 0
+
+
+def test_export_quiz_missing_code_returns_no(client):
+    """export_quiz with unknown code returns literal 'no' (line 155)."""
+    response = client.get("/dashboard/export-quiz/doesnotexist999")
+    assert response.status_code == 200
+    assert response.get_data(as_text=True) == "no"

@@ -1,5 +1,6 @@
 """Tests for API views in app/api/views.py."""
 import json
+from unittest.mock import MagicMock, patch
 
 from app.modules.utils import generate_password
 
@@ -134,3 +135,118 @@ def test_edit_profile_requires_login(client):
         content_type="application/json",
     )
     assert response.status_code == 302
+
+
+def test_add_account_insert_without_inserted_id(client):
+    """If insert_one returns no inserted_id, add_account should fail (line 42)."""
+    mock_result = MagicMock()
+    mock_result.inserted_id = None
+    payload = {
+        "full_name": "No Id User",
+        "username": "noiduser",
+        "password": "secret123",
+        "password_confirmation": "secret123",
+        "email": "noid@example.com",
+    }
+    with patch("app.api.views.db.users.insert_one", return_value=mock_result):
+        response = client.post(
+            "/api/add-account",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+    data = response.get_json()
+    assert data["status"] == "fail"
+    assert data.get("errors") == "unkown failure"
+
+
+def test_add_account_insert_raises_exception(client):
+    """DB exception during insert should be returned in errors (lines 43-44)."""
+    payload = {
+        "full_name": "Boom User",
+        "username": "boomuser",
+        "password": "secret123",
+        "password_confirmation": "secret123",
+        "email": "boom@example.com",
+    }
+    with patch(
+        "app.api.views.db.users.insert_one",
+        side_effect=RuntimeError("database unavailable"),
+    ):
+        response = client.post(
+            "/api/add-account",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+    data = response.get_json()
+    assert data["status"] == "fail"
+    assert "database unavailable" in data.get("errors", "")
+
+
+def test_api_login_invalid_form_returns_fail(client):
+    """When LoginForm.validate() is false, api_login should not check password (line 87)."""
+    with patch("app.api.views.LoginForm") as mock_form_cls:
+        instance = mock_form_cls.return_value
+        instance.validate.return_value = False
+        response = client.post(
+            "/api/login",
+            data=json.dumps({"username": "any", "password": "any"}),
+            content_type="application/json",
+        )
+    data = response.get_json()
+    assert data["status"] == "fail"
+    assert "invalid username" in data.get("errors", "").lower()
+
+
+def test_manage_users_unpromote(admin_client, registered_user):
+    """Admin unpromote option updates user type to 0 (lines 60-62)."""
+    with admin_client.application.app_context():
+        from app.db import db
+
+        db.users.update_one(
+            {"username": registered_user["username"]},
+            {"$set": {"type": 1}},
+        )
+
+    response = admin_client.post(
+        "/api/manage-users",
+        data=json.dumps({
+            "option": "unpromote",
+            "data": [registered_user["username"]],
+        }),
+        content_type="application/json",
+    )
+    data = response.get_json()
+    assert data["status"] == "success"
+
+    with admin_client.application.app_context():
+        from app.db import db
+
+        doc = db.users.find_one({"username": registered_user["username"]})
+    assert doc.get("type") == 0
+
+
+def test_edit_profile_duplicate_username(app, logged_in_client, registered_user):
+    """Changing username to one owned by another user should fail (lines 112-113)."""
+    from app.db import db
+
+    with app.app_context():
+        db.users.insert_one({
+            "full_name": "Taken User",
+            "username": "takenname",
+            "email": "takenname@example.com",
+            "password": generate_password("pass123"),
+            "type": 0,
+        })
+
+    response = logged_in_client.post(
+        "/api/edit-profile",
+        data=json.dumps({
+            "username": "takenname",
+            "email": registered_user["email"],
+            "full_name": registered_user["full_name"],
+        }),
+        content_type="application/json",
+    )
+    data = response.get_json()
+    assert data["status"] == "failed"
+    assert "username" in data.get("message", "").lower()
