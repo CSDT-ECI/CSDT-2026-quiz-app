@@ -9,32 +9,31 @@ app = create_app(os.environ.get('FLASK_ENV','development'))
 
 from app.db import db, quiz
 
-@app.before_first_request 
+
 def seed_data():
-    """"
-    if there was no user with admin role, add new one
-    login with 
-        * username : admin
-        * password : admin1
-    
-    you can change the email, username, password in dashboard
+    """
+    If there are no users, add a default admin.
+    Login: username admin, password admin1 (change in dashboard).
     """
     cek = db.users.find_one({})
     if not cek:
-        
-        data = {}
-
-        data['full_name'] = 'Admin Web'
-        data['username'] = 'admin'
-        data['password'] = generate_password('admin1')
-        data['joined_at'] = datetime.utcnow()
-        data['email'] = 'yourmail@gmail.com'
-        data['type'] = 1 
-
+        data = {
+            'full_name': 'Admin Web',
+            'username': 'admin',
+            'password': generate_password('admin1'),
+            'joined_at': datetime.utcnow(),
+            'email': 'yourmail@gmail.com',
+            'type': 1,
+        }
         insert_data = db.users.insert_one(data)
         if insert_data.inserted_id:
             app.logger.info('new user added')
-    
+
+
+with app.app_context():
+    seed_data()
+
+
 @app.errorhandler(CSRFError)
 def error_csrf(e):
     return jsonify(status='fail', errors='CSRF Error, please refresh the page')
