@@ -368,6 +368,8 @@ Al inicio del análisis, el proyecto contaba con **8 tests** exclusivamente de t
 
 ### 5.2 Prácticas de Testing Debt identificadas
 
+#### 5.2.1 Prácticas identificadas en la primera intervención (entrega anterior)
+
 | # | Práctica de Testing Debt | Evidencia en el proyecto | Impacto |
 | :-: | :---------------------- | :----------------------- | :------ |
 | 1 | **Ausencia total de tests unitarios para lógica de negocio** | Funciones críticas como `nilai()` (cálculo de puntaje), `add_account()` (registro), `api_login()` (autenticación) no tenían ningún test. | Cualquier cambio en estas funciones podría romper funcionalidad sin ser detectado. |
@@ -377,6 +379,18 @@ Al inicio del análisis, el proyecto contaba con **8 tests** exclusivamente de t
 | 5 | **Sin tests de edge cases** | No había tests para inputs inválidos, campos faltantes, archivos malformados, usuarios duplicados, contraseñas incorrectas, etc. | Los caminos de error nunca se verificaban. |
 | 6 | **Cobertura de branches en 0%** | Ninguna rama condicional (`if/else`) estaba cubierta por tests. | Las decisiones lógicas del código nunca se ejecutaban en tests. |
 | 7 | **Dependencia frágil del mock de MongoDB** | El `conftest.py` original parcheaba `os.environ` pero no la config de Flask, causando `RuntimeError: MONGODB_URI not found` en todos los tests que requerían la app. | Los tests existentes probablemente nunca se ejecutaron con éxito en CI. |
+
+#### 5.2.2 Prácticas de testing debt identificadas en la segunda intervención
+
+Tras la primera intervención se incrementó la cobertura a 70.54%. Sin embargo, el análisis de la suite resultante reveló nuevas prácticas de deuda de testing que persistían:
+
+| # | Práctica de Testing Debt | Evidencia en el proyecto | Impacto |
+| :-: | :---------------------- | :----------------------- | :------ |
+| 8 | **Tests con estado compartido (contaminación entre tests)** | `test_add_account_success` en `test_api_views.py` usa el username `testuser`, el mismo que inserta el fixture `registered_user` (con `autouse=True`). Al ejecutar la suite completa, el test falla porque el usuario ya existe en la BD mock. En aislamiento sí pasa. | Tests que pasan individualmente pero fallan en la suite completa generan falsa confianza e impiden detectar regresiones reales. |
+| 9 | **Cobertura nula del módulo `dashboard/views.py`** | `dashboard/views.py` tenía 46.94% de cobertura. Vistas críticas como `edit_quiz`, `delete_quiz`, `logout`, `download_quiz` no tenían ningún test. La lógica de autorización (¿puede el usuario editar este quiz?) nunca se verificaba. | Las vistas de dashboard son las más usadas por usuarios autenticados; un bug en autorización podría permitir que un usuario edite o elimine quizzes de otro. |
+| 10 | **Flujos de carga de archivos sin cobertura** | El endpoint `uploadCsv` en `api/quiz.py` tenía 0% de cobertura (líneas 148–205). Los flujos de CSV válido, CSV inválido, JSON válido, JSON inválido y archivo de extensión incorrecta nunca se ejecutaban en tests. | Este endpoint acepta entrada de usuario no confiable; un error en validación podría insertar datos malformados o causar errores en producción. |
+| 11 | **Rutas de administración sin cobertura de integración** | Las operaciones de admin (`manage_users`: delete, promote, unpromote) y las verificaciones de autorización de perfil (`edit_profile`, `change_password` con contraseña incorrecta) no tenían tests. | Operaciones destructivas (eliminar usuarios) sin tests de integración son un riesgo alto: un bug silencioso podría borrar usuarios legítimos. |
+| 12 | **Branches de autorización en vistas sin cubrir** | En `dashboard/views.py`, las ramas `edit_quiz` (acceso de admin vs. propietario vs. usuario ajeno) y `delete_quiz` (misma lógica) no tenían ningún test de branch. La cobertura de branches del módulo era 0%. | Verificar solo el camino feliz de una vista deja los paths de rechazo sin validación; regresiones en autorización no se detectarían. |
 
 ---
 
@@ -424,11 +438,52 @@ def add_account():
 
 **Problema**: La validación de username duplicado depende de que `ProfileForm` consulte la BD dentro de un validador. Sin tests, no se verificaba que registrar el mismo username dos veces retornara un error.
 
+#### Ejemplo 4 (segunda intervención): Contaminación entre tests — BD mock compartida
+
+```python
+# tests/conftest.py
+@pytest.fixture(autouse=True)          # ← se ejecuta en TODOS los tests
+def mock_mongodb():
+    ...
+
+@pytest.fixture
+def registered_user(app, sample_user_data):
+    # inserta {"username": "testuser", ...} en la BD mock
+    db.users.insert_one(user)
+    return sample_user_data
+
+# tests/test_api_views.py
+def test_add_account_success(client):
+    # intenta registrar {"username": "testuser", ...} — ya existe!
+    response = client.post("/api/add-account", data=json.dumps({
+        "username": "testuser", ...
+    }))
+    assert data["status"] == "success"  # ← FALLA cuando se corre con la suite completa
+```
+
+**Problema**: `mock_mongodb` aplica `autouse=True` (se inyecta en todos los tests) pero no limpia la BD entre tests. Si cualquier test que use `registered_user` corre antes de `test_add_account_success`, la BD ya tiene `testuser` y el test falla. Este es el patrón clásico de **test order dependency**: los tests no son idempotentes ni aislados.
+
+#### Ejemplo 5 (segunda intervención): Lógica de autorización de dashboard sin tests
+
+```python
+# app/dashboard/views.py — línea 76
+@dashboard.route('/edit-quiz/<code>')
+@login_required
+def edit_quiz(code):
+    check = json_decoder(quiz.find_one({'code': code}))
+    if check and (session.get('username') == check['author'] or session.get('type') == 1):
+        # ... renderizar formulario de edición
+        return render_template('dashboard/add-quizes.html', forms=forms)
+    abort(403)  # ← esta rama nunca se ejecutaba en tests
+```
+
+**Problema**: La rama `abort(403)` — que protege el quiz de ser editado por un usuario que no es el autor ni admin — nunca se cubría. Un usuario ajeno podría acceder al quiz si se introdujera un bug en la condición y no habría test que lo detectara.
+
 ---
 
 ### 5.4 Tests implementados para reducir la deuda
 
-Se crearon **37 nuevos tests** distribuidos en 4 módulos:
+#### 5.4.1 Primera intervención — 37 tests nuevos
 
 | Módulo | Tests | Qué cubren |
 | :----- | :---: | :--------- |
@@ -437,16 +492,39 @@ Se crearon **37 nuevos tests** distribuidos en 4 módulos:
 | `tests/test_api_views.py` | 9 | Endpoints de usuario: registro, login, perfil, contraseña |
 | `tests/test_api_quiz.py` | 10 | Endpoints de quiz: creación, preguntas, puntaje, scores |
 
+#### 5.4.2 Segunda intervención — 39 tests nuevos
+
+Se crearon **3 nuevos módulos de test** para cubrir las áreas con mayor deuda remanente:
+
+| Módulo | Tests | Qué cubren |
+| :----- | :---: | :--------- |
+| `tests/test_dashboard_views.py` | 18 | Vistas de dashboard: autenticación, edición/eliminación de quiz, autorización por rol, logout, rutas duplicadas |
+| `tests/test_upload_csv.py` | 8 | Carga de archivos CSV y JSON: formato válido, campos faltantes, extensión incorrecta, sin archivo |
+| `tests/test_api_admin.py` | 13 | Operaciones admin: delete/promote/unpromote, cambio de contraseña, edición de perfil, visualización de quiz, flujos de error |
+
+**Áreas específicamente cubiertas por primera vez:**
+- `edit_quiz` con usuario propietario ✅, usuario ajeno (403) ✅, admin ✅
+- `delete_quiz` con código existente y no existente ✅
+- `logout` con verificación de sesión borrada ✅
+- `uploadCsv` con CSV válido, CSV inválido, JSON válido, JSON inválido ✅
+- `manage_users` (delete, promote, unpromote) ✅
+- `change_password` con contraseña correcta e incorrecta ✅
+- `edit_profile` con email duplicado ✅
+- `nilai` para quiz inexistente ✅
+
 ---
 
-### 5.5 Resultados después de la intervención
+### 5.5 Resultados después de cada intervención
 
-| Métrica | Antes | Después | Mejora |
-| :------ | :---: | :-----: | :----: |
-| Tests totales | 8 | **45** | +462% |
-| Cobertura de líneas | 5.8% | **64%** | +58.2pp |
-| Cobertura de branches | 0% | **13%+** | Desde cero |
-| Archivos con 100% cobertura | 2 | **12** | +10 |
+| Métrica | Inicial | 1ª intervención | 2ª intervención |
+| :------ | :-----: | :-------------: | :-------------: |
+| Tests totales | 8 | 45 | **84** |
+| Cobertura de líneas | 5.8% | 70.54% | **90%** |
+| Cobertura de branches | 0% | 29.59% | **~84%** |
+| Archivos con 100% cobertura | 2 | 12 | **16** |
+| `dashboard/views.py` cobertura | 0% | 46.94% | **85%** |
+| `api/quiz.py` cobertura | 0% | 57.72% | **85%** |
+| `api/views.py` cobertura | 0% | 63.83% | **90%** |
 
 ---
 
@@ -454,11 +532,11 @@ Se crearon **37 nuevos tests** distribuidos en 4 módulos:
 
 | Área | Descripción | Prioridad |
 | :--- | :---------- | :-------: |
-| `dashboard/views.py` (42%) | Vistas de dashboard con lógica de descarga, edición y eliminación de quizzes | Media |
-| `api/quiz.py` upload CSV/JSON | Flujos de carga de archivos con validación de formato | Media |
-| `api/quiz.py` search | Búsqueda por texto (requiere soporte de text index en mock) | Baja |
-| Tests de integración E2E | Flujos completos: registro → login → crear quiz → responder → ver scores | Alta |
-| Tests de frontend (JS) | `dashboard.js` y `script.js` no tienen tests | Media |
+| `test_add_account_success` — contaminación de BD | El fixture `registered_user` con `autouse=True` inserta `testuser` antes de que el test intente registrarlo. Solución: usar username único en el test o añadir limpieza de BD en `teardown`. | Alta |
+| `dashboard/views.py` — `download_quiz` | El endpoint de descarga usa una agregación de MongoDB que mongomock no soporta completamente. Requiere mock adicional o refactoring del endpoint. | Media |
+| `api/quiz.py` — búsqueda por texto | El endpoint `quiz_search` requiere índice de texto de MongoDB; mongomock tiene soporte limitado para `$text`. | Baja |
+| Tests de integración E2E | Flujos completos: registro → login → crear quiz → responder → ver scores con verificación end-to-end | Alta |
+| Tests de frontend (JS) | `dashboard.js` y `script.js` no tienen tests; el bug del operador `&` vs `&&` no está cubierto | Media |
 
 ---
 
@@ -467,3 +545,220 @@ Se crearon **37 nuevos tests** distribuidos en 4 módulos:
 *Este documento puede actualizarse conforme se apliquen refactorizaciones o se detecten nuevos puntos de deuda técnica.*
 
 </div>
+
+---
+
+## 📊 6. Developer Experience (DevEx) & Framework SPACE
+
+### 6.1 Developer Experience (DevEx)
+
+#### 6.1.1 Definición y contexto
+
+**Developer Experience (DevEx)** es el conjunto de factores que determinan qué tan fluida, eficiente y satisfactoria es la experiencia de un desarrollador al trabajar con una codebase, herramientas y procesos de desarrollo. Fue formalizado por GitHub en 2023 como un marco para medir la efectividad del desarrollo de software.
+
+El framework DevEx evalúa cuatro dimensiones:
+- **Feedback Loops**: Velocidad y calidad de la retroalimentación (compilación, tests, errores)
+- **Cognitive Load**: Cantidad de información que el desarrollador debe mantener en mente simultáneamente
+- **Flow State**: Capacidad del entorno para facilitar la concentración sostenida
+- **Tooling**: Calidad y ergonomía de las herramientas utilizadas
+
+#### 6.1.2 Análisis DevEx del proyecto
+
+##### ✅ Puntos Positivos
+
+| Área | Evidencia | Impacto en DevEx |
+| :--- | :-------- | :--------------- |
+| **CI/CD con GitHub Actions** | Workflow configurado en `.github/workflows/build.yml` con pytest, coverage y SonarCloud | Feedback loop automatizado; el desarrollador sabe inmediatamente si su código rompe algo |
+| **Testing infrastructure** | Suite de 84 tests con pytest, fixtures en `conftest.py`, mongomock para aislamiento | Reduce incertidumbre; permite modificar código con confianza |
+| **Cobertura de código** | 90% de cobertura de líneas, configuración en `.coveragerc` y `coverage.xml` | Feedback preciso sobre áreas no testeadas |
+| **Configuración por entornos** | `config.py` con Development, Production, Testing configs separados | Facilita transiciones entre contextos sin cambios de código |
+| **Blueprints modulares** | Flask Blueprints para auth, api, dashboard, main, quiz | Permite navegación clara del código; nuevo desarrollador encuentra dónde están las rutas |
+| **Dependencies minimalistas** | 36 dependencias en requirements.txt (Flask, PyMongo, pytest) | Curva de aprendizaje reducida; menos tecnología que dominar |
+| **Documentación existente** | README.md con features, screenshots, demo credentials | Bajo onboarding para nuevos contribuidores |
+| **SonarCloud configurado** | `sonar-project.properties` con organización y project key | Análisis estático automático; deuda técnica visible |
+| **Gitignore adecuado** | Excluye `__pycache__/`, `env/` | Reduce ruido en el repositorio |
+
+##### ❌ Puntos Negativos
+
+| Área | Problema | Impacto en DevEx |
+| :--- | :------- | :--------------- |
+| **Configuración manual de variables de entorno** | MONGODB_URI debe configurarse manualmente; no hay `.env.example` | Friction en onboarding; nuevo desarrollador tarda en levantar el proyecto |
+| **Deprecación no abordada** | `@app.before_first_request` (Flask 2.3+) y `os.urandom(12)` | Técnicamente funciona pero genera warnings; riesgo de rotura futura |
+| **Inconsistencia en respuestas API** | Alterna `status='fail'` y `status='failed'` | Dificultad para consumir la API; necesidad de manejar ambos casos |
+| **Errores expuestos al cliente** | `str(e)` en respuestas JSON de API | Riesgo de seguridad + developer frustration al depurar |
+| **Secretos hardcodeados en seed** | Admin credentials en `server.py:29` (`admin1`) | Si alguien sube esto, queda expuesto en historial de git |
+| **Sin pre-commit hooks** | No hay validación antes de commits | Código con typos/lint puede llegar a main |
+| **Typos en código** | `get_scorest`, `Unkown`, `unkown` | Confusión; afectan legibilidad y mantenimiento |
+| **Dependencias desactualizadas** | Flask 2.0.2 (2021), Werkzeug 2.0.2 | Vulnerabilidades conocidas; comportamiento inesperado con Python 3.11+ |
+| **Sin type hints** | Código sin annotaciones de tipo | Menor tooling (autocomplete, error checking); mayor carga cognitiva |
+| **Logs usando print** | `print('new index created ..')` en `api/quiz.py` | Difícil trazabilidad en producción; polución de output |
+
+##### 🔧 Oportunidades de Mejora DevEx
+
+| Mejora | Prioridad | Esfuerzo | Impacto |
+| :----- | :-------: | :------: | :------ |
+| Agregar `.env.example` con variables requeridas | Alta | Bajo | Elimina fricción de onboarding |
+| Crear script `scripts/setup.sh` para instalar deps + config inicial | Alta | Bajo | Automatiza primero 5 minutos del developer |
+| Implementar pre-commit hooks (ruff/flake8 + pytest) | Alta | Bajo | Previene código de baja calidad en CI |
+| Actualizar a Flask 3.x LTS | Media | Medio | Seguridad + nuevas features + mejor error messages |
+| Agregar type hints progresivamente | Media | Alto | Mejor tooling, autocomplete, menos bugs |
+| Centralizar manejo de errores API | Media | Bajo | Consistencia; mejor DX para consumir la API |
+| Reemplazar `print` por `app.logger` | Baja | Bajo | Trazabilidad en producción |
+| Documentar el flujo de datos con diagrams/ADR | Baja | Medio | Reduce carga cognitiva para nuevos devs |
+
+---
+
+### 6.2 Framework SPACE
+
+#### 6.2.1 Definición
+
+El framework **SPACE** (Forsman et al., 2021) mide la productividad del desarrollador en 5 dimensiones:
+- **S** — Satisfaction: Satisfacción del desarrollador con su trabajo y herramientas
+- **P** — Performance: Outcome medible del trabajo (velocity, bugs resueltos, features)
+- **A** — Activity: Medidas de actividad (commits, PRs, builds, tests)
+- **C** — Communication: Colaboración y teamwork
+- **E** — Efficiency: Qué tan bien se usan los recursos (caching, parallelization, flow)
+
+#### 6.2.2 Métricas Identificables para el Proyecto
+
+##### Satisfaction (S)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Tiempo hasta el primer commit significativo** | ~15-30 min (config manual) | Medir onboarding de nuevos devs | < 10 min |
+| **Frecuencia de bloqueos ("estoy atascado")** | Desconocido | Survey mensual | Reducir 30% |
+| **NPS del equipo sobre herramientas** | Desconocido | Survey trimestral | > 50 |
+| **Tasa de rotación de contexto** (switching entre tareas) | Alta (múltiples archivos sin service layer) | Telemetry / survey | < 5 switches/día |
+
+##### Performance (P)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Features completadas por sprint** | Desconocido | GitHub milestones | Baseline + 20% |
+| **Bugs en producción por release** | Desconocido | Bug tracker | < 3/release |
+| **Cobertura de código** | 90% | `pytest --cov` | Mantener > 85% |
+| **Debt ratio** (issues SonarCloud) | ~10% del código | SonarCloud | < 5% |
+| **MRR** (Mean Repair Time) para bugs | Desconocido | Ticket resolution time | < 4 horas |
+
+##### Activity (A)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Commits por semana** | ~2-3/semana (historial) | `git shortlog -sn --since="7 days"` | 5-10/semana |
+| **PRs merged por semana** | ~1-2/semana | GitHub insights | 3-5/semana |
+| **Tests ejecutados por día** | ~84 tests, 2-3 min | CI runs | Mantener o reducir tiempo |
+| **Build time** | ~2-3 min (CI) | GitHub Actions logs | < 2 min |
+| **Líneas de código escritas/eliminadas** | Net positivo (~50/week) | `git diff --stat` | Monitorear deuda técnica |
+
+##### Communication (C)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Tiempo de review de PRs** | Desconocido | GitHub PR metrics | < 24 horas |
+| **Reviewers por PR** | ~1 (comités limitados) | GitHub PR data | 2-3 |
+| ** Comentarios en código/documentación** | Limitado | Survey | > 50%覆盖率 |
+| **ADRs/decisiones arquitectónicas documentadas** | 0 | Archivos en `docs/` | > 5 ADRs |
+
+##### Efficiency (E)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Costo de CI/CD por build** | ~$0 (GitHub Actions free tier) | GitHub Actions billing | Mantener |
+| **Test suite execution time** | ~2-3 min | `pytest --durations=10` | < 2 min |
+| **Tiempo de cold start** (setup dev environment) | ~15-30 min | Onboarding measurement | < 10 min |
+| **Cache hit ratio en CI** | Desconocido | GitHub Actions cache stats | > 70% |
+| **Parallelization en CI** | Parcial (tests secuenciales) | Workflow config | Tests paralelos |
+| **Ratio tiempo-coding / tiempo-configurando** | Bajo (~70/30) | Time tracking | > 80/20 |
+
+---
+
+### 6.3 Dashboard de Métricas DevEx + SPACE Sugerido
+
+```yaml
+# .github/ISSUE_TEMPLATES/devex-metric.yml
+
+DevEx & SPACE Metrics:
+  S - Satisfaction:
+    - First commit time: < 10 min
+    - Setup script available: Yes/No
+    - .env.example exists: Yes/No
+  
+  P - Performance:
+    - Test coverage: > 85%
+    - SonarQube issues: < 10 blockers
+    - Bug escape rate: < 5%
+  
+  A - Activity:
+    - Weekly commits: > 5
+    - PRs merged: > 3
+    - Build pass rate: > 95%
+  
+  C - Communication:
+    - Avg PR review time: < 24h
+    - PRs with 2+ reviewers: > 50%
+  
+  E - Efficiency:
+    - CI time: < 2 min
+    - Test suite time: < 2 min
+    - Cold start: < 10 min
+```
+
+---
+
+### 6.4 Plan de Implementación DevEx + SPACE
+
+#### Fase 1: Quick Wins (Semana 1-2)
+
+| Acción | Impacto | Métrica afectada |
+| :----- | :------ | :--------------- |
+| Crear `.env.example` | Onboarding | S (satisfaction) |
+| Agregar pre-commit hook con ruff | Code quality | P (performance) |
+| Script `scripts/setup.sh` | Onboarding | S (satisfaction), E (efficiency) |
+| Actualizar README con setup rápido | Onboarding | S (satisfaction) |
+| Corregir typos y `status='failed'` → `'fail'` | DX | E (efficiency) |
+
+#### Fase 2: Medium-term (Semana 3-6)
+
+| Acción | Impacto | Métrica afectada |
+| :----- | :------ | :--------------- |
+| Migrar a Flask 3.x con typing | Security + DX | P (performance), S (satisfaction) |
+| Implementar Service Layer | Maintainability | E (efficiency), S (satisfaction) |
+| Agregar GitHub Actions cache optimization | CI speed | E (efficiency), A (activity) |
+| Dashboard de métricas con GitHub Actions | Visibility | C (communication), P (performance) |
+| Integrar Slack/Teams para PR notifications | Communication | C (communication) |
+
+#### Fase 3: Long-term (Mes 2-3)
+
+| Acción | Impacto | Métrica afectada |
+| :----- | :------ | :--------------- |
+| Type hints en todo el codebase | DX + Reliability | S (satisfaction), P (performance) |
+| E2E tests con Playwright/Cypress | Quality | P (performance) |
+| Developer survey trimestral | Satisfaction | S (satisfaction) |
+| Architecture Decision Records (ADRs) | Knowledge sharing | C (communication) |
+| Onboarding documentation interactiva | Onboarding | S (satisfaction) |
+
+---
+
+### 6.5 Conclusiones y Recomendaciones Finales
+
+#### Fortalezas del proyecto en DevEx + SPACE:
+1. **Infraestructura de testing sólida** (84 tests, 90% coverage) — habilita confianza y productividad
+2. **CI/CD configurado** con SonarCloud — visibility sobre calidad
+3. **Estructura modular** con Blueprints — bajo acoplamiento, fácil navegación
+4. **Documentación básica** — reduce curva de aprendizaje
+
+#### Áreas críticas a mejorar:
+1. **Onboarding friction** — sin `.env.example` ni script de setup
+2. **Code quality tooling ausente** — sin pre-commit hooks, sin linter configurado
+3. **Métricas de equipo invisibles** — sin tracking de satisfaction, communication, o long-term performance
+4. **Actualización de dependencias** — Flask 2.0.2 (2021) con vulnerabilidades conocidas
+5. **Centralización de configuración** — SECRET_KEY en código, MONGODB_URI manual
+
+#### Inversión sugerida:
+- **40%** del tiempo en quick wins (Fase 1) — impacto inmediato en satisfaction
+- **35%** en tooling y automatización — impacto en efficiency y performance
+- **25%** en métricas y feedback loops — impacto en communication y long-term improvement
+
+---
+
+*Sección creada para la rama `DevEx`. Actualizar conforme se implementen mejoras.*

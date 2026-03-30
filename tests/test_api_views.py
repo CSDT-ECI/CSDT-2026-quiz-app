@@ -9,11 +9,11 @@ def test_add_account_success(client):
     response = client.post(
         "/api/add-account",
         data=json.dumps({
-            "full_name": "Test User",
-            "username": "testuser",
+            "full_name": "New User",
+            "username": "newuser",
             "password": "secret123",
             "password_confirmation": "secret123",
-            "email": "test@example.com",
+            "email": "newuser@example.com",
         }),
         content_type="application/json",
     )
