@@ -739,7 +739,39 @@ DevEx & SPACE Metrics:
 
 ---
 
-### 6.5 Conclusiones y Recomendaciones Finales
+### 6.5 Integración continua: GitHub Actions
+
+El repositorio define el workflow **Build and SonarCloud** en `.github/workflows/build.yml`. Automatiza instalación de dependencias, comprobaciones de seguridad (dependencias y código estático), pruebas con cobertura y envío del análisis a SonarCloud, de modo que cada cambio en `main` o en pull requests recibe retroalimentación consistente sin pasos manuales.
+
+#### Disparadores y política de ejecución
+
+| Elemento | Propósito |
+| :------- | :-------- |
+| **Push a `main`** | Ejecuta el pipeline cuando se integra código en la rama principal. |
+| **Pull request hacia `main`** | Valida el mismo conjunto de pasos antes del merge, alineado con la rama destino. |
+| **`workflow_dispatch`** | Permite lanzar el workflow manualmente desde la pestaña Actions (p. ej. reanalizar sin nuevo commit). |
+| **`permissions: contents: read`** | Limita el token del workflow a lectura del repositorio (principio de mínimo privilegio). |
+| **`concurrency` + `cancel-in-progress: true`** | Agrupa ejecuciones por workflow y referencia (rama/PR); cancela ejecuciones antiguas cuando llega un push nuevo en la misma rama, ahorrando minutos de CI y evitando resultados obsoletos. |
+
+#### Pasos del job (orden de ejecución)
+
+| Paso | Propósito |
+| :--- | :---------- |
+| **Checkout** | Clona el repositorio con historial completo (`fetch-depth: 0`) para que SonarCloud pueda analizar correctamente ramas, PRs y contexto de cambios. |
+| **Set up Python** | Instala Python **3.11** y activa **caché de pip** basada en `requirements.txt`, acelerando instalaciones repetidas en el runner. |
+| **Install dependencies** | Actualiza `pip` e instala todas las dependencias del proyecto (aplicación, pruebas, `pip-audit`, `bandit`, etc.) desde `requirements.txt`. |
+| **Audit dependencies (pip-audit)** | Ejecuta `pip-audit` sobre el archivo de requisitos para detectar **vulnerabilidades conocidas (CVEs)** en dependencias declaradas; falla el job si hay hallazgos no resueltos, alineado con buenas prácticas de cadena de suministro. |
+| **Bandit (SAST)** | Ejecuta **Bandit** sobre el paquete `app/` con umbral medio o superior (`-ll`), buscando patrones inseguros en código Python (análisis estático complementario a SonarCloud). |
+| **Run tests with coverage** | Define `MONGODB_URI` para los tests, ejecuta **pytest** con cobertura sobre `app` y genera informe en consola y **`coverage.xml`** para que SonarCloud importe la cobertura. |
+| **SonarCloud Scan** | Lanza la acción oficial **SonarScanner** (referencia fijada por **SHA completo** del commit, no solo por etiqueta móvil `@v7`, para cumplir reglas de seguridad de la cadena de suministro). Usa `SONAR_TOKEN` del repositorio y `SONAR_HOST_URL` (o `https://sonarcloud.io` por defecto) para enviar el análisis y métricas a SonarCloud. |
+
+#### Resumen
+
+En conjunto, el workflow cierra el ciclo **código → dependencias auditadas → SAST ligero → tests medibles → análisis Sonar + cobertura**, reforzando el feedback loop descrito en la dimensión DevEx de esta misma sección.
+
+---
+
+### 6.6 Conclusiones y Recomendaciones Finales
 
 #### Fortalezas del proyecto en DevEx + SPACE:
 1. **Infraestructura de testing sólida** (84 tests, 90% coverage) — habilita confianza y productividad
