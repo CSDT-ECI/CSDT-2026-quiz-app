@@ -14,21 +14,7 @@ En la primera fase comenzamos con un enfoque de *Vibe Coding*, es decir, interac
 
 El resultado inicial fue engañosamente bueno. La IA generó una interfaz funcional en muy poco tiempo, lo que da una sensación de eficiencia y facilidad. Sin embargo, este “éxito” inicial ocultaba un problema: no había ningún control sobre cómo estaba construido el sistema.
 
-Primer resultado:
-
-<video width="320" height="240" controls>
-  <source src="images/Screen Recording 2026-04-08 at 11.40.26 PM.mov" type="video/quicktime">
-  Your browser does not support the video tag.
-</video>
-
 Cuando empezamos a pedir cambios más complejos (agregar una tabla de resultados, una gráfica interactiva, estilos dinámicos y exportación a PDF) el sistema comenzó a degradarse. La IA empezó a tomar decisiones implícitas, como incluir librerías externas sin justificación clara, y el código creció de manera desorganizada.
-
-Segundo resultado:
-
-<video width="320" height="240" controls>
-  <source src="images/Screen Recording 2026-04-08 at 11.49.02 PM.mov" type="video/quicktime">
-  Your browser does not support the video tag.
-</video>
 
 El punto crítico llegó cuando se solicitó un nuevo cambio aparentemente simple: eliminar la gráfica, simplificar el diseño y modificar la lógica de cálculo. En ese momento, el sistema perdió coherencia. Se rompieron funcionalidades anteriores, partes útiles desaparecieron y el código se volvió difícil de entender. Aquí se hizo evidente el llamado **“efecto mariposa”**: pequeños cambios en los prompts generan impactos grandes e impredecibles en el sistema.
 
