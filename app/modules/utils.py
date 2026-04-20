@@ -19,7 +19,8 @@ def generate_code(nums: int=6):
     return ''.join(random.choice(CHAR) for _ in range(nums))
 
 def generate_password(password):
-    return generate_password_hash(password, method='sha512')
+    # Werkzeug 3+ no longer supports method='sha512'; default is pbkdf2:sha256
+    return generate_password_hash(password)
 
 def check_password(pw_hash, password):
     return check_password_hash(pw_hash, password)

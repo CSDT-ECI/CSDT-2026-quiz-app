@@ -7,6 +7,14 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -22,20 +30,34 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Audit dependencies (pip-audit)
+        run: python -m pip_audit -r requirements.txt
+
+      - name: Bandit (SAST)
+        run: python -m bandit -r app -ll
+
       - name: Run tests with coverage
         run: |
-          pytest --cov=app --cov-report=xml --cov-report=term -v
+          python -m pytest --cov=app --cov=server --cov-report=xml --cov-report=term -v
         env:
           MONGODB_URI: "mongodb://localhost"
 
+      # Cobertura from pytest-cov uses <source></source> + <source>app</source> and splits
+      # repo-root server.py from app/*; SonarCloud often fails to attach hits to server.py.
+      - name: Normalize coverage.xml for SonarCloud
+        run: python scripts/normalize_coverage_for_sonar.py coverage.xml
+
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@v7
+        # Pinned to v7.0.0 (full SHA satisfies supply-chain / Sonar rules)
+        uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL || 'https://sonarcloud.io' }}

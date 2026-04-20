@@ -1,7 +1,14 @@
+# Do not set `source = app` alone: it drops repo-root modules from coverage.xml, so Sonar
+# reports 0% on new code in server.py even when tests cover it.
+# Include both packages in CI/local: pytest --cov=app --cov=server --cov-report=xml
 [run]
-source = app
 branch = True
 relative_files = True
+omit =
+    tests/*
+    */__pycache__/*
 
 [report]
-omit = tests/*
+omit =
+    tests/*
+    */__pycache__/*
