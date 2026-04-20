@@ -66,7 +66,7 @@ Este documento consolida el trabajo realizado durante el curso de **Calidad de S
 │       └──► 9 prácticas XP evaluadas y priorizadas           │
 │                                                             │
 │  [4] Deuda técnica en pruebas                               │
-│       └──► Cobertura: 5.8% → 64%                           │
+│       └──► Cobertura: 5.8% → 64% → 90%                     │
 │                                                             │
 │  [5] Modelos de calidad                                     │
 │       └──► SonarCloud + herramientas complementarias con IA │
@@ -97,11 +97,11 @@ Se propusieron **12 técnicas de refactorización** priorizadas por impacto y es
 
 ## 🧪 3. Deuda Técnica en Pruebas
 
-### 3.1 Diagnóstico
+### 3.1 Diagnóstico inicial
 
 El proyecto contaba con **8 smoke tests** que solo verificaban códigos HTTP sin validar lógica, datos ni seguridad. La cobertura era de **5.8%** en líneas y **0%** en branches.
 
-Se identificaron 7 tipos de testing debt:
+Se identificaron 7 tipos de testing debt en la primera revisión:
 
 | Tipo de deuda | Resumen |
 | :------------ | :------ |
@@ -113,9 +113,19 @@ Se identificaron 7 tipos de testing debt:
 | Branches sin cubrir | 0% de ramas condicionales ejecutadas |
 | Infraestructura de test rota | `conftest.py` con bug que impedía crear la app en tests |
 
-### 3.2 Intervención
+Tras la primera intervención se elevó la cobertura a **70.54%**. El análisis posterior de la suite resultante reveló **5 prácticas adicionales de testing debt**:
 
-Se crearon **37 nuevos tests** en 4 módulos:
+| Tipo de deuda (segunda revisión) | Resumen |
+| :-------------------------------- | :------ |
+| **Tests con estado compartido** | `registered_user` (autouse) contamina tests que usan el mismo username, causando fallos dependientes del orden de ejecución |
+| **`dashboard/views.py` sin cobertura** | Vistas de edición, eliminación, logout y descarga nunca ejecutadas en tests (46.94% cobertura) |
+| **Flujos de carga de archivos sin cobertura** | Endpoint `uploadCsv` (CSV y JSON) con 0% de cobertura a pesar de aceptar entrada de usuario no confiable |
+| **Operaciones de administración sin tests** | `manage_users` (delete/promote/unpromote) sin ningún test de integración |
+| **Branches de autorización sin cubrir** | La rama `abort(403)` en `edit_quiz` nunca se ejecutaba; autorización sin verificación de caminos de rechazo |
+
+### 3.2 Intervenciones
+
+#### Primera intervención — 37 tests nuevos (4 módulos)
 
 | Módulo | Tests | Alcance |
 | :----- | :---: | :------ |
@@ -124,15 +134,23 @@ Se crearon **37 nuevos tests** en 4 módulos:
 | `test_api_views.py` | 9 | Endpoints de usuario: registro, login, perfil |
 | `test_api_quiz.py` | 10 | Endpoints de quiz: creación, preguntas, puntajes |
 
+#### Segunda intervención — 39 tests nuevos (3 módulos)
+
+| Módulo | Tests | Alcance |
+| :----- | :---: | :------ |
+| `test_dashboard_views.py` | 18 | Vistas de dashboard: edición/eliminación de quiz, autorización por rol, logout |
+| `test_upload_csv.py` | 8 | Carga de archivos CSV y JSON con validación de formato y extensión |
+| `test_api_admin.py` | 13 | Operaciones de admin, cambio de contraseña, edición de perfil, flujos de error |
+
 ### 3.3 Resultados
 
 ```
-ANTES                                    DESPUÉS
-═════                                    ═══════
+INICIAL           1ª INTERVENCIÓN          2ª INTERVENCIÓN
+═══════           ═══════════════          ═══════════════
 
-Tests:     8                             Tests:     45  (+462%)
-Líneas:    5.8%  █░░░░░░░░░░░░░░░░░░░    Líneas:    64%  █████████████░░░░░░░
-Branches:  0.0%  ░░░░░░░░░░░░░░░░░░░░    Branches:  13%  ███░░░░░░░░░░░░░░░░
+Tests:     8      Tests:     45  (+462%)   Tests:     84  (+950%)
+Líneas:    5.8%   Líneas:    70%           Líneas:    90%  ██████████████████░░
+Branches:  0.0%   Branches:  30%           Branches:  ~84% █████████████████░░░
 ```
 
 ---
@@ -217,7 +235,7 @@ Gratuito (open source) ✅        ✅        ✅          ✅
 
 | Prioridad | Práctica | Estado |
 | :-------: | :------- | :----: |
-| 🔴 | TDD / Tests | Parcialmente implementado (64% cobertura) |
+| 🔴 | TDD / Tests | Parcialmente implementado (90% cobertura líneas) |
 | 🔴 | Integración Continua | Implementado (GitHub Actions + SonarCloud) |
 | 🟡 | Estándares de codificación | Pendiente |
 | 🟡 | Refactoring continuo | Planificado |
@@ -241,12 +259,14 @@ Gratuito (open source) ✅        ✅        ✅          ✅
 ### Métricas de impacto
 
 ```
-INDICADOR                  ANTES          DESPUÉS
-──────────────────────────────────────────────────
-Tests                      8              45
-Cobertura de líneas        5.8%           64%
-Problemas documentados     0              25+
-Refactorings planificados  0              12
+INDICADOR                  ANTES          1ª ENTREGA     2ª ENTREGA
+─────────────────────────────────────────────────────────────────────
+Tests                      8              45             84
+Cobertura de líneas        5.8%           70.54%         90%
+Cobertura de branches      0%             29.59%         ~84%
+Testing debt identificada  0              7 tipos        12 tipos
+Problemas documentados     0              25+            25+
+Refactorings planificados  0              12             12
 CI/CD pipeline             No             GitHub Actions + SonarCloud
 ```
 
