@@ -29,6 +29,9 @@
 2. [Técnicas de refactorización y candidatos](#-2-técnicas-de-refactorización-y-candidatos)
 3. [Priorización sugerida](#-3-priorización-sugerida)
 4. [Clean Code & XP Practices](#-4-clean-code--xp-practices)
+5. [Deuda Técnica en Pruebas](#-5-deuda-técnica-en-pruebas)
+6. [Developer Experience (DevEx) & Framework SPACE](#-6-developer-experience-devex--framework-space)
+7. [Architectural Smells](#️-7-architectural-smells)
 
 ---
 
@@ -762,3 +765,304 @@ DevEx & SPACE Metrics:
 ---
 
 *Sección creada para la rama `DevEx`. Actualizar conforme se implementen mejoras.*
+
+---
+
+## 🏛️ 7. Architectural Smells
+
+### 7.1 Definición y marco de referencia
+
+Los **architectural smells** son problemas estructurales en la arquitectura del software que, si no se atienden, degradan progresivamente la mantenibilidad, la modularidad y la testabilidad del sistema. A diferencia de los code smells (que afectan funciones o clases), los architectural smells afectan componentes completos y sus interacciones.
+
+Este análisis sigue el catálogo establecido en:
+
+> Mumtaz, H., Singh, P., & Blincoe, K. (2020). *A Systematic Mapping Study on Architectural Smells Detection*. Journal of Systems and Software. https://doi.org/10.1016/j.jss.2020.110885
+
+El paper clasifica los smells en categorías: **Service**, **Performance**, **Dependency**, **Package**, **MVC**, **Component** y **Other smells**. Los smells detectados en este proyecto pertenecen principalmente a las categorías MVC, Dependency y Component, coherente con que la aplicación sigue un estilo arquitectural de capas sobre Flask Blueprints.
+
+El documento detallado con evidencias completas se encuentra en `Architectural Debt/ArchitecturalSmells.md`.
+
+---
+
+### 7.2 Smells identificados
+
+#### AS-01 · Scattered Functionality
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC |
+| **Calidad afectada** | Mantenibilidad, Cohesión |
+| **Severidad** | 🔴 Alta |
+
+**Descripción:** Una funcionalidad que debería residir en un único componente se encuentra dispersa en múltiples módulos. La **lógica de autorización** (decidir si un usuario puede ver o modificar un quiz) aparece duplicada en al menos cinco puntos del código sin ninguna capa de servicios intermedia:
+
+```python
+# dashboard/views.py — línea 56
+author = {'$exists':True} if session.get('type') == 1 else session.get('username')
+
+# dashboard/views.py — línea 81
+if check and (session.get('username') == check['author'] or session.get('type') == 1):
+
+# dashboard/views.py — línea 113
+if result.get('author') == session.get('username') or session.get('type') == 1:
+
+# api/quiz.py — línea 50
+if check and (session.get('username') == check['author'] or session.get('type') == 1):
+
+# api/quiz.py — línea 106
+author = {'$exists':True} if session.get('type') == 1 else session.get('username')
+```
+
+**Archivos afectados:** `app/dashboard/views.py` (líneas 56, 81, 113), `app/api/quiz.py` (líneas 50, 106), `app/auth/forms.py` (líneas 60–65), `app/dashboard/forms.py` (línea 29).
+
+**Impacto:** Cualquier cambio en la política de autorización (p.ej. añadir un nuevo rol) requiere modificar todos los puntos manualmente, con alto riesgo de inconsistencia.
+
+**Refactoring sugerido:** Crear `app/services/auth_service.py` con funciones `is_quiz_author_or_admin(quiz_doc, session)` y `get_author_filter(session)`.
+
+---
+
+#### AS-02 · God Component / Concern Overload
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC / Component |
+| **Calidad afectada** | Mantenibilidad, Cohesión, Modificabilidad |
+| **Severidad** | 🔴 Alta |
+
+**Descripción:** El Blueprint `api` actúa como un **God Component**: concentra responsabilidades de capas distintas en una sola función. La función `nilai()` en `api/quiz.py` (líneas 57–97) mezcla en ~40 líneas: parsing de la request, lógica de negocio (cálculo de puntaje), dos accesos a la base de datos y formateo de la respuesta HTTP.
+
+```python
+# api/quiz.py — función nilai() (fragmento ilustrativo)
+def nilai(code):
+    check = json_decoder(quiz.find_one({'code':code}))      # acceso a BD
+    json_request = request.get_json()                       # parsing HTTP
+    list_true = [...]                                       # lógica de negocio
+    fix_value = round(len(list_true) * per_true)            # cálculo de puntaje
+    user = json_decoder(db.users.find_one({...}))           # segundo acceso a BD
+    db.score.insert_one(json_decoder(data_value))           # escritura a BD
+    return jsonify(status='success', data=data_value)       # respuesta HTTP
+```
+
+**Archivos afectados:** `app/api/quiz.py` (función `nilai`, líneas 57–97), `app/api/views.py` (funciones `add_account`, `edit_profile`).
+
+**Impacto:** Los módulos de API no pueden ser probados unitariamente sin instanciar toda la pila Flask + MongoDB. Añadir nuevas reglas de negocio exige entender todo el flujo mezclado.
+
+**Refactoring sugerido:** Introducir `app/services/quiz_service.py` con `calculate_score`, `submit_answers`, `find_quiz_by_code`, y `app/services/user_service.py`. Las vistas solo orquestan request → servicio → response.
+
+---
+
+#### AS-03 · Cyclic Dependency
+
+| | |
+| :--- | :--- |
+| **Categoría** | Dependency |
+| **Calidad afectada** | Mantenibilidad, Modularidad, Testabilidad |
+| **Severidad** | 🔴 Alta |
+
+**Descripción:** Existe una **dependencia circular** entre el módulo de aplicación y el módulo de base de datos. El ciclo se forma así:
+
+```
+app/__init__.py  ──importa──▶  app/modules/utils.py  ──importa──▶  app/modules/mongo.py
+      ▲                                                                        │
+      └───────────────────  app/db.py  ──importa──▶  app  ────────────────────┘
+                            (from app import mongo_utils)
+```
+
+`app/db.py` ejecuta `mongo_utils.get_db()` **en tiempo de importación**, lo que hace que el estado de `app/__init__.py` deba estar completamente inicializado antes de que cualquier otro módulo importe `db`. Además, `app/__init__.py` importa `Mongo_Utils` desde `utils.py` en lugar de desde `mongo.py`, creando una ruta de dependencia innecesariamente larga.
+
+```python
+# app/__init__.py — línea 2
+from .modules.utils import Mongo_Utils   # ← debería importar desde .modules.mongo
+
+# app/db.py — líneas 1–4
+from app import mongo_utils
+db, quiz = mongo_utils.get_db()          # ← efecto secundario en tiempo de importación
+```
+
+**Archivos afectados:** `app/__init__.py` (línea 2), `app/db.py` (líneas 1–4), `app/modules/utils.py` (línea 4).
+
+**Impacto:** Fragilidad en el orden de importación; el ciclo es la causa raíz de los problemas con el mock de MongoDB en los tests (deuda de testing práctica #7, §5.2.1).
+
+**Refactoring sugerido:** Importar `Mongo_Utils` directamente desde `app.modules.mongo`; reemplazar `app/db.py` por una función `get_db()` lazy que no ejecute código en tiempo de importación; eliminar el re-export de `Mongo_Utils` desde `utils.py`.
+
+---
+
+#### AS-04 · Abstraction without Decoupling
+
+| | |
+| :--- | :--- |
+| **Categoría** | Component |
+| **Calidad afectada** | Mantenibilidad, Reusabilidad, Testabilidad |
+| **Severidad** | 🔴 Alta |
+
+**Descripción:** Los módulos de **alto nivel** de la arquitectura (vistas, formularios) importan directamente el módulo de bajo nivel de acceso a datos, sin ninguna abstracción intermedia. No existe capa de repositorio ni de servicio:
+
+```python
+from app.db import db, quiz   # en api/views.py, api/quiz.py, dashboard/views.py
+from app.db import db         # en auth/forms.py y dashboard/forms.py
+```
+
+**Cinco módulos de capas distintas** dependen del mismo objeto de infraestructura. El caso más crítico ocurre en los formularios WTForms, que acceden a la base de datos dentro de sus validadores — la capa de presentación realizando acceso directo a datos sin intermediario:
+
+```python
+# auth/forms.py — línea 60 (dentro de un validador de formulario)
+def validate_username(self, username):
+    if db.users.find_one({'username':username.data}):
+        raise ValidationError('Username already registered')
+```
+
+**Archivos afectados:** `app/api/views.py` (línea 8), `app/api/quiz.py` (línea 7), `app/dashboard/views.py` (línea 11), `app/auth/forms.py` (líneas 16, 60, 64), `app/dashboard/forms.py` (líneas 5, 29).
+
+**Impacto:** Cambiar el motor de base de datos exigiría modificar todos los archivos que referencian `db.*` directamente. Los formularios no pueden instanciarse ni probarse sin una conexión activa a MongoDB.
+
+**Refactoring sugerido:** Crear repositorios o servicios (`UserRepository`, `QuizRepository`) como abstracción; los formularios deben recibir la función de validación como dependencia inyectada, no importar `db` directamente.
+
+---
+
+#### AS-05 · Sloppy Delegation
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC |
+| **Calidad afectada** | Cohesión, Claridad |
+| **Severidad** | 🟡 Media |
+
+**Descripción:** El módulo `app/modules/utils.py` realiza una **delegación inadecuada**: mezcla utilidades puras (hash, generación de códigos, serialización JSON) con la clase de infraestructura `Mongo_Utils`, re-exportándola sin justificación aparente. Además contiene una importación duplicada de `ObjectId`:
+
+```python
+# app/modules/utils.py
+from bson.objectid import ObjectId   # línea 3 — primera importación
+from .mongo import Mongo_Utils       # línea 4 — re-export que no corresponde aquí
+...
+from bson import ObjectId            # línea 8 — importación duplicada
+```
+
+Como resultado, `app/__init__.py` importa `Mongo_Utils` desde `utils` en lugar de desde `mongo`, creando la ruta de dependencia que origina AS-03.
+
+**Archivos afectados:** `app/modules/utils.py` (líneas 3, 4, 8), `app/__init__.py` (línea 2).
+
+**Refactoring sugerido:** Separar en tres módulos con responsabilidad única: `security.py` (funciones de contraseña), `utils.py` (solo utilidades puras), `mongo.py` (ya existe, debe ser la única fuente de `Mongo_Utils`).
+
+---
+
+#### AS-06 · Ambiguous Interface
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC / Other smells |
+| **Calidad afectada** | Usabilidad de la API, Consistencia |
+| **Severidad** | 🟡 Media |
+
+**Descripción:** La interfaz pública de la API REST presenta **contratos ambiguos** en múltiples dimensiones:
+
+| Problema | Ejemplo en el código |
+| :------- | :------------------- |
+| Valor de `status` en error alterna entre `'fail'` y `'failed'` | `api/views.py` líneas 42, 63; `api/quiz.py` líneas 117 |
+| Clave del mensaje alterna entre `errors` y `message` | `api/views.py` líneas 44, 87 vs. 63, 99 |
+| Exposición de detalles internos al cliente | `api/views.py` línea 44: `errors='<p>{}'.format(e)` |
+| Typo en nombre de función/endpoint | `api/quiz.py` línea 100: `get_scorest` en lugar de `get_scores` |
+
+**Archivos afectados:** `app/api/views.py` (líneas 42, 44, 63, 87, 113, 116), `app/api/quiz.py` (líneas 32, 55, 97, 100, 117).
+
+**Refactoring sugerido:** Definir constantes `API_STATUS_SUCCESS`/`API_STATUS_FAIL` en `app/api/constants.py`; unificar la clave de mensaje a `message`; crear un helper `api_error(message, code=400)`; documentar el contrato con esquema OpenAPI.
+
+---
+
+#### AS-07 · Feature Concentration
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC |
+| **Calidad afectada** | Mantenibilidad, Modularidad |
+| **Severidad** | 🟡 Media |
+
+**Descripción:** El archivo `app/api/quiz.py` (206 líneas) concentra **cinco áreas funcionales distintas** sin separación: creación/edición de quizzes, cálculo y almacenamiento de puntajes, consulta de scores, búsqueda de quizzes y carga masiva CSV/JSON. Adicionalmente, `dashboard/views.py` contiene dos rutas que renderizan exactamente el mismo template:
+
+```python
+# dashboard/views.py — rutas duplicadas
+@dashboard.route('/scores')
+def scores():
+    return render_template('dashboard/users-scores.html')   # mismo template
+
+@dashboard.route('/users-scores')
+def users_scores():
+    return render_template('dashboard/users-scores.html')   # mismo template
+```
+
+**Archivos afectados:** `app/api/quiz.py` (8 funciones con responsabilidades heterogéneas), `app/dashboard/views.py` (líneas 117–126).
+
+**Refactoring sugerido:** Dividir el Blueprint `api` en sub-módulos: `api/users.py`, `api/quizzes.py`, `api/scores.py`. Eliminar la ruta duplicada manteniendo solo una o redirigiendo desde la otra.
+
+---
+
+#### AS-08 · Implicit Cross-module Dependency
+
+| | |
+| :--- | :--- |
+| **Categoría** | Dependency |
+| **Calidad afectada** | Testabilidad, Robustez |
+| **Severidad** | 🟠 Media-Alta |
+
+**Descripción:** Existen **dependencias implícitas de estado global** que no se declaran en las firmas de las funciones: la sesión de Flask (`session`) y las variables globales `db`/`quiz` se consumen directamente desde cualquier función sin recibirlos como parámetros. Además, `server.py` usa `@app.before_first_request` (deprecado desde Flask 2.3) como mecanismo de inicialización, creando una dependencia implícita de orden de arranque:
+
+```python
+# server.py — línea 12
+@app.before_first_request   # ← deprecado en Flask 2.3
+def seed_data():
+    cek = db.users.find_one({})   # falla silenciosamente si MongoDB no está disponible
+```
+
+**Archivos afectados:** `app/db.py` (líneas 1–4), `server.py` (línea 12), múltiples funciones en `dashboard/views.py` y `api/quiz.py` que consumen `session` como dependencia implícita.
+
+**Impacto:** Las dependencias implícitas son la causa directa de los problemas de aislamiento en los tests documentados en §5.2.1 (práctica #7) y §5.2.2 (práctica #8). En producción, si MongoDB no está disponible al inicio, la aplicación falla con errores crípticos en lugar de un mensaje claro.
+
+**Refactoring sugerido:** Reemplazar `@app.before_first_request` por un comando Flask CLI (`flask seed-admin`); encapsular el acceso a `session` en funciones utilitarias; reemplazar las variables globales `db`/`quiz` por una función `get_db()` lazy.
+
+---
+
+### 7.3 Resumen y priorización
+
+| # | Smell | Categoría | Severidad | Esfuerzo |
+| :-: | :---- | :-------- | :-------: | :------: |
+| AS-01 | Scattered Functionality | MVC | 🔴 Alta | Medio |
+| AS-02 | God Component / Concern Overload | MVC / Component | 🔴 Alta | Alto |
+| AS-03 | Cyclic Dependency | Dependency | 🔴 Alta | Medio |
+| AS-04 | Abstraction without Decoupling | Component | 🔴 Alta | Alto |
+| AS-05 | Sloppy Delegation | MVC | 🟡 Media | Bajo |
+| AS-06 | Ambiguous Interface | MVC | 🟡 Media | Bajo |
+| AS-07 | Feature Concentration | MVC | 🟡 Media | Bajo–Medio |
+| AS-08 | Implicit Cross-module Dependency | Dependency | 🟠 Media-Alta | Medio |
+
+**Orden de atención recomendado:**
+
+| Prioridad | Smell | Justificación |
+| :-------: | :---- | :------------ |
+| 🔴 **1** | **AS-03 Cyclic Dependency** | Problema estructural de arranque; resuelve riesgos de `ImportError` en tests y producción |
+| 🔴 **2** | **AS-04 Abstraction without Decoupling** | Habilita tests unitarios reales; es precondición para resolver AS-01 y AS-02 |
+| 🔴 **3** | **AS-01 Scattered Functionality** | Una vez que existe capa de servicios (AS-04), centralizar autorización es directo |
+| 🟡 **4** | **AS-06 Ambiguous Interface** | Esfuerzo bajo, impacto inmediato en consistencia del contrato API |
+| 🟡 **5** | **AS-05 Sloppy Delegation** | Limpieza de `utils.py`, elimina origen del ciclo AS-03 |
+| 🟡 **6** | **AS-07 Feature Concentration** | División de módulos de API; paralelizable con AS-05 |
+| 🟢 **7** | **AS-02 God Component** | Requiere la capa de servicios (AS-04) como prerequisito |
+| 🟢 **8** | **AS-08 Implicit Dependency** | Paralelizable con AS-03 y AS-04 |
+
+---
+
+### 7.4 Relación con deuda técnica y DevEx
+
+Los architectural smells no son problemas aislados: amplifican la deuda técnica documentada en las secciones anteriores y degradan la DevEx medida con el framework SPACE:
+
+| Architectural Smell | Impacto en Deuda Técnica (§1–§5) | Impacto en DevEx / SPACE (§6) |
+| :------------------ | :-------------------------------- | :---------------------------- |
+| AS-01 Scattered Functionality | Duplicación de lógica (§1.2, §4.2.2 DRY) | Cognitive Load alto: cambio de política exige tocar N archivos |
+| AS-02 God Component | SOLID-S violado (§4.2.1); `nilai()` sin tests (§5.3 Ejemplo 1) | Flow State interrumpido: funciones de 40+ líneas difíciles de navegar |
+| AS-03 Cyclic Dependency | Mock de MongoDB frágil (§5.2.1 práctica #7) | Feedback Loop lento: tests fallan por orden de importación |
+| AS-04 Abstraction sin Decoupling | SOLID-D violado (§4.2.1); formularios con acceso a BD (§1.2) | Efficiency baja: imposible testear formularios sin BD activa |
+| AS-05 Sloppy Delegation | Imports duplicados en `utils.py` (§1.4) | Cognitive Load: `utils.py` mezcla infraestructura y utilidades |
+| AS-06 Ambiguous Interface | Inconsistencia `'fail'`/`'failed'` (§1.3, §2.1) | Satisfaction baja: frontend debe manejar ambos valores de estado |
+| AS-07 Feature Concentration | Rutas duplicadas (§2.9, §4.2.2 DRY) | Cognitive Load: 8 responsabilidades en un solo archivo |
+| AS-08 Implicit Dependency | `@before_first_request` deprecado (§1.1); contaminación en tests (§5.2.2 práctica #8) | Feedback Loop: fallos crípticos al arrancar sin MongoDB |
+
+---
+
+*Sección creada para la rama `DevEx`. Referencia completa con evidencias de código en `Architectural Debt/ArchitecturalSmells.md`.*
