@@ -542,19 +542,22 @@ Cualquier módulo que haga `from app.db import db` adquiere una dependencia impl
 
 **c) Dependencia implícita de orden de inicialización:**
 
-`server.py` usa `@app.before_first_request` (deprecado desde Flask 2.3) para ejecutar el seed de datos. Esta función asume que MongoDB está disponible en el primer request, sin ninguna verificación explícita ni mecanismo de fallback:
+`server.py` ejecuta el seed de datos **en tiempo de importación**, dentro de un bloque `with app.app_context()` a nivel de módulo. La función `seed_data()` no está registrada con ningún hook explícito del framework: simplemente se invoca antes de que el servidor WSGI empiece a aceptar requests, con acceso directo a `db` (importado también a nivel de módulo). Esto introduce varias precondiciones ocultas: que `create_app()` ya haya inicializado `mongo_utils`, que `app/db.py` se haya importado correctamente y que MongoDB sea alcanzable en ese instante.
 
 ```python
-# server.py — línea 12
-@app.before_first_request
-def seed_data():
-    cek = db.users.find_one({})   # ← falla silenciosamente si MongoDB no está disponible
+# server.py — líneas 10, 33–34
+from app.db import db, quiz                  # ← import con efecto secundario (ver AS-03)
+
+with app.app_context():
+    seed_data()                              # ← falla al cargar el módulo si MongoDB no responde
 ```
+
+Si MongoDB no está disponible al arrancar, la excepción de PyMongo se propaga durante la importación del módulo y no durante el manejo de un request, por lo que el mensaje no indica al operador que falta una dependencia externa.
 
 #### Evidencia directa
 
 - `app/db.py`: líneas 1–4 (ejecución en tiempo de importación)
-- `server.py`: línea 12 (`@app.before_first_request`, deprecado)
+- `server.py`: líneas 10 y 33–34 (import con efecto secundario + seed en tiempo de carga del módulo)
 - `app/dashboard/views.py`: múltiples usos de `session.get(...)` como dependencia implícita
 - `app/api/quiz.py`: múltiples usos de `session.get(...)` y `db`/`quiz` globales
 
@@ -564,7 +567,7 @@ Las dependencias implícitas dificultan enormemente los tests: es necesario mock
 
 #### Refactoring sugerido
 
-- Reemplazar `@app.before_first_request` por un comando Flask CLI (`flask seed-admin`) o un hook de inicialización explícito en el factory.
+- Mover el `seed_data()` a un comando Flask CLI (`flask seed-admin`) o a un hook de inicialización explícito dentro del factory, de modo que no se ejecute en tiempo de importación.
 - Encapsular el acceso a `session` en funciones utilitarias que reciban el contexto como parámetro.
 - Reemplazar las variables globales `db`/`quiz` por funciones de acceso lazy (`get_db()`) que no ejecuten código en tiempo de importación.
 
@@ -631,7 +634,7 @@ Los smells AS-03, AS-04 y AS-08 constituyen **deuda arquitectural primaria**: af
 
 <div align="center">
 
-*Documento elaborado para la rama `DevEx` — Quiz App · CSDT 2026 · Anti-Spaghetti-Squad*
+*Documento elaborado para la rama `feat/architectural-smells-v2` — Quiz App · CSDT 2026 · Anti-Spaghetti-Squad*
 
 *Puede actualizarse conforme se apliquen refactorizaciones o se detecten nuevos smells.*
 

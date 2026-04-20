@@ -742,7 +742,39 @@ DevEx & SPACE Metrics:
 
 ---
 
-### 6.5 Conclusiones y Recomendaciones Finales
+### 6.5 Integración continua: GitHub Actions
+
+El repositorio define el workflow **Build and SonarCloud** en `.github/workflows/build.yml`. Automatiza instalación de dependencias, comprobaciones de seguridad (dependencias y código estático), pruebas con cobertura y envío del análisis a SonarCloud, de modo que cada cambio en `main` o en pull requests recibe retroalimentación consistente sin pasos manuales.
+
+#### Disparadores y política de ejecución
+
+| Elemento | Propósito |
+| :------- | :-------- |
+| **Push a `main`** | Ejecuta el pipeline cuando se integra código en la rama principal. |
+| **Pull request hacia `main`** | Valida el mismo conjunto de pasos antes del merge, alineado con la rama destino. |
+| **`workflow_dispatch`** | Permite lanzar el workflow manualmente desde la pestaña Actions (p. ej. reanalizar sin nuevo commit). |
+| **`permissions: contents: read`** | Limita el token del workflow a lectura del repositorio (principio de mínimo privilegio). |
+| **`concurrency` + `cancel-in-progress: true`** | Agrupa ejecuciones por workflow y referencia (rama/PR); cancela ejecuciones antiguas cuando llega un push nuevo en la misma rama, ahorrando minutos de CI y evitando resultados obsoletos. |
+
+#### Pasos del job (orden de ejecución)
+
+| Paso | Propósito |
+| :--- | :---------- |
+| **Checkout** | Clona el repositorio con historial completo (`fetch-depth: 0`) para que SonarCloud pueda analizar correctamente ramas, PRs y contexto de cambios. |
+| **Set up Python** | Instala Python **3.11** y activa **caché de pip** basada en `requirements.txt`, acelerando instalaciones repetidas en el runner. |
+| **Install dependencies** | Actualiza `pip` e instala todas las dependencias del proyecto (aplicación, pruebas, `pip-audit`, `bandit`, etc.) desde `requirements.txt`. |
+| **Audit dependencies (pip-audit)** | Ejecuta `pip-audit` sobre el archivo de requisitos para detectar **vulnerabilidades conocidas (CVEs)** en dependencias declaradas; falla el job si hay hallazgos no resueltos, alineado con buenas prácticas de cadena de suministro. |
+| **Bandit (SAST)** | Ejecuta **Bandit** sobre el paquete `app/` con umbral medio o superior (`-ll`), buscando patrones inseguros en código Python (análisis estático complementario a SonarCloud). |
+| **Run tests with coverage** | Define `MONGODB_URI` para los tests, ejecuta **pytest** con cobertura sobre `app` y genera informe en consola y **`coverage.xml`** para que SonarCloud importe la cobertura. |
+| **SonarCloud Scan** | Lanza la acción oficial **SonarScanner** (referencia fijada por **SHA completo** del commit, no solo por etiqueta móvil `@v7`, para cumplir reglas de seguridad de la cadena de suministro). Usa `SONAR_TOKEN` del repositorio y `SONAR_HOST_URL` (o `https://sonarcloud.io` por defecto) para enviar el análisis y métricas a SonarCloud. |
+
+#### Resumen
+
+En conjunto, el workflow cierra el ciclo **código → dependencias auditadas → SAST ligero → tests medibles → análisis Sonar + cobertura**, reforzando el feedback loop descrito en la dimensión DevEx de esta misma sección.
+
+---
+
+### 6.6 Conclusiones y Recomendaciones Finales
 
 #### Fortalezas del proyecto en DevEx + SPACE:
 1. **Infraestructura de testing sólida** (84 tests, 90% coverage) — habilita confianza y productividad
@@ -780,7 +812,7 @@ Este análisis sigue el catálogo establecido en:
 
 El paper clasifica los smells en categorías: **Service**, **Performance**, **Dependency**, **Package**, **MVC**, **Component** y **Other smells**. Los smells detectados en este proyecto pertenecen principalmente a las categorías MVC, Dependency y Component, coherente con que la aplicación sigue un estilo arquitectural de capas sobre Flask Blueprints.
 
-El documento detallado con evidencias completas se encuentra en `Architectural Debt/ArchitecturalSmells.md`.
+El documento detallado con evidencias completas se encuentra en `ArchitecturalSmells.md`.
 
 ---
 
@@ -1003,20 +1035,21 @@ def users_scores():
 | **Calidad afectada** | Testabilidad, Robustez |
 | **Severidad** | 🟠 Media-Alta |
 
-**Descripción:** Existen **dependencias implícitas de estado global** que no se declaran en las firmas de las funciones: la sesión de Flask (`session`) y las variables globales `db`/`quiz` se consumen directamente desde cualquier función sin recibirlos como parámetros. Además, `server.py` usa `@app.before_first_request` (deprecado desde Flask 2.3) como mecanismo de inicialización, creando una dependencia implícita de orden de arranque:
+**Descripción:** Existen **dependencias implícitas de estado global** que no se declaran en las firmas de las funciones: la sesión de Flask (`session`) y las variables globales `db`/`quiz` se consumen directamente desde cualquier función sin recibirlos como parámetros. Además, `server.py` ejecuta el seed de datos **en tiempo de importación**, dentro de un bloque `with app.app_context()` a nivel de módulo, creando una dependencia implícita de orden de arranque:
 
 ```python
-# server.py — línea 12
-@app.before_first_request   # ← deprecado en Flask 2.3
-def seed_data():
-    cek = db.users.find_one({})   # falla silenciosamente si MongoDB no está disponible
+# server.py — líneas 10, 33–34
+from app.db import db, quiz                  # ← import con efecto secundario
+...
+with app.app_context():
+    seed_data()                              # ← se ejecuta al cargar el módulo
 ```
 
-**Archivos afectados:** `app/db.py` (líneas 1–4), `server.py` (línea 12), múltiples funciones en `dashboard/views.py` y `api/quiz.py` que consumen `session` como dependencia implícita.
+**Archivos afectados:** `app/db.py` (líneas 1–4), `server.py` (líneas 10 y 33–34), múltiples funciones en `dashboard/views.py` y `api/quiz.py` que consumen `session` como dependencia implícita.
 
-**Impacto:** Las dependencias implícitas son la causa directa de los problemas de aislamiento en los tests documentados en §5.2.1 (práctica #7) y §5.2.2 (práctica #8). En producción, si MongoDB no está disponible al inicio, la aplicación falla con errores crípticos en lugar de un mensaje claro.
+**Impacto:** Las dependencias implícitas son la causa directa de los problemas de aislamiento en los tests documentados en §5.2.1 (práctica #7) y §5.2.2 (práctica #8). En producción, si MongoDB no está disponible al arrancar, la excepción se propaga durante la importación del módulo — no durante un request — y la aplicación falla con errores crípticos en lugar de un mensaje claro.
 
-**Refactoring sugerido:** Reemplazar `@app.before_first_request` por un comando Flask CLI (`flask seed-admin`); encapsular el acceso a `session` en funciones utilitarias; reemplazar las variables globales `db`/`quiz` por una función `get_db()` lazy.
+**Refactoring sugerido:** Mover `seed_data()` a un comando Flask CLI (`flask seed-admin`) o a un hook de inicialización explícito dentro del factory, de modo que no se ejecute en tiempo de importación; encapsular el acceso a `session` en funciones utilitarias; reemplazar las variables globales `db`/`quiz` por una función `get_db()` lazy.
 
 ---
 
@@ -1061,8 +1094,8 @@ Los architectural smells no son problemas aislados: amplifican la deuda técnica
 | AS-05 Sloppy Delegation | Imports duplicados en `utils.py` (§1.4) | Cognitive Load: `utils.py` mezcla infraestructura y utilidades |
 | AS-06 Ambiguous Interface | Inconsistencia `'fail'`/`'failed'` (§1.3, §2.1) | Satisfaction baja: frontend debe manejar ambos valores de estado |
 | AS-07 Feature Concentration | Rutas duplicadas (§2.9, §4.2.2 DRY) | Cognitive Load: 8 responsabilidades en un solo archivo |
-| AS-08 Implicit Dependency | `@before_first_request` deprecado (§1.1); contaminación en tests (§5.2.2 práctica #8) | Feedback Loop: fallos crípticos al arrancar sin MongoDB |
+| AS-08 Implicit Dependency | `seed_data()` ejecutándose en tiempo de importación desde `server.py` (§1.1); contaminación en tests (§5.2.2 práctica #8) | Feedback Loop: fallos crípticos al arrancar sin MongoDB |
 
 ---
 
-*Sección creada para la rama `DevEx`. Referencia completa con evidencias de código en `Architectural Debt/ArchitecturalSmells.md`.*
+*Sección creada para la rama `DevEx`. Referencia completa con evidencias de código en `ArchitecturalSmells.md`.*
