@@ -29,6 +29,9 @@
 2. [Técnicas de refactorización y candidatos](#-2-técnicas-de-refactorización-y-candidatos)
 3. [Priorización sugerida](#-3-priorización-sugerida)
 4. [Clean Code & XP Practices](#-4-clean-code--xp-practices)
+5. [Deuda Técnica en Pruebas](#-5-deuda-técnica-en-pruebas)
+6. [Developer Experience (DevEx) & Framework SPACE](#-6-developer-experience-devex--framework-space)
+7. [Architectural Smells](#️-7-architectural-smells)
 
 ---
 
@@ -368,6 +371,8 @@ Al inicio del análisis, el proyecto contaba con **8 tests** exclusivamente de t
 
 ### 5.2 Prácticas de Testing Debt identificadas
 
+#### 5.2.1 Prácticas identificadas en la primera intervención (entrega anterior)
+
 | # | Práctica de Testing Debt | Evidencia en el proyecto | Impacto |
 | :-: | :---------------------- | :----------------------- | :------ |
 | 1 | **Ausencia total de tests unitarios para lógica de negocio** | Funciones críticas como `nilai()` (cálculo de puntaje), `add_account()` (registro), `api_login()` (autenticación) no tenían ningún test. | Cualquier cambio en estas funciones podría romper funcionalidad sin ser detectado. |
@@ -377,6 +382,18 @@ Al inicio del análisis, el proyecto contaba con **8 tests** exclusivamente de t
 | 5 | **Sin tests de edge cases** | No había tests para inputs inválidos, campos faltantes, archivos malformados, usuarios duplicados, contraseñas incorrectas, etc. | Los caminos de error nunca se verificaban. |
 | 6 | **Cobertura de branches en 0%** | Ninguna rama condicional (`if/else`) estaba cubierta por tests. | Las decisiones lógicas del código nunca se ejecutaban en tests. |
 | 7 | **Dependencia frágil del mock de MongoDB** | El `conftest.py` original parcheaba `os.environ` pero no la config de Flask, causando `RuntimeError: MONGODB_URI not found` en todos los tests que requerían la app. | Los tests existentes probablemente nunca se ejecutaron con éxito en CI. |
+
+#### 5.2.2 Prácticas de testing debt identificadas en la segunda intervención
+
+Tras la primera intervención se incrementó la cobertura a 70.54%. Sin embargo, el análisis de la suite resultante reveló nuevas prácticas de deuda de testing que persistían:
+
+| # | Práctica de Testing Debt | Evidencia en el proyecto | Impacto |
+| :-: | :---------------------- | :----------------------- | :------ |
+| 8 | **Tests con estado compartido (contaminación entre tests)** | `test_add_account_success` en `test_api_views.py` usa el username `testuser`, el mismo que inserta el fixture `registered_user` (con `autouse=True`). Al ejecutar la suite completa, el test falla porque el usuario ya existe en la BD mock. En aislamiento sí pasa. | Tests que pasan individualmente pero fallan en la suite completa generan falsa confianza e impiden detectar regresiones reales. |
+| 9 | **Cobertura nula del módulo `dashboard/views.py`** | `dashboard/views.py` tenía 46.94% de cobertura. Vistas críticas como `edit_quiz`, `delete_quiz`, `logout`, `download_quiz` no tenían ningún test. La lógica de autorización (¿puede el usuario editar este quiz?) nunca se verificaba. | Las vistas de dashboard son las más usadas por usuarios autenticados; un bug en autorización podría permitir que un usuario edite o elimine quizzes de otro. |
+| 10 | **Flujos de carga de archivos sin cobertura** | El endpoint `uploadCsv` en `api/quiz.py` tenía 0% de cobertura (líneas 148–205). Los flujos de CSV válido, CSV inválido, JSON válido, JSON inválido y archivo de extensión incorrecta nunca se ejecutaban en tests. | Este endpoint acepta entrada de usuario no confiable; un error en validación podría insertar datos malformados o causar errores en producción. |
+| 11 | **Rutas de administración sin cobertura de integración** | Las operaciones de admin (`manage_users`: delete, promote, unpromote) y las verificaciones de autorización de perfil (`edit_profile`, `change_password` con contraseña incorrecta) no tenían tests. | Operaciones destructivas (eliminar usuarios) sin tests de integración son un riesgo alto: un bug silencioso podría borrar usuarios legítimos. |
+| 12 | **Branches de autorización en vistas sin cubrir** | En `dashboard/views.py`, las ramas `edit_quiz` (acceso de admin vs. propietario vs. usuario ajeno) y `delete_quiz` (misma lógica) no tenían ningún test de branch. La cobertura de branches del módulo era 0%. | Verificar solo el camino feliz de una vista deja los paths de rechazo sin validación; regresiones en autorización no se detectarían. |
 
 ---
 
@@ -424,11 +441,52 @@ def add_account():
 
 **Problema**: La validación de username duplicado depende de que `ProfileForm` consulte la BD dentro de un validador. Sin tests, no se verificaba que registrar el mismo username dos veces retornara un error.
 
+#### Ejemplo 4 (segunda intervención): Contaminación entre tests — BD mock compartida
+
+```python
+# tests/conftest.py
+@pytest.fixture(autouse=True)          # ← se ejecuta en TODOS los tests
+def mock_mongodb():
+    ...
+
+@pytest.fixture
+def registered_user(app, sample_user_data):
+    # inserta {"username": "testuser", ...} en la BD mock
+    db.users.insert_one(user)
+    return sample_user_data
+
+# tests/test_api_views.py
+def test_add_account_success(client):
+    # intenta registrar {"username": "testuser", ...} — ya existe!
+    response = client.post("/api/add-account", data=json.dumps({
+        "username": "testuser", ...
+    }))
+    assert data["status"] == "success"  # ← FALLA cuando se corre con la suite completa
+```
+
+**Problema**: `mock_mongodb` aplica `autouse=True` (se inyecta en todos los tests) pero no limpia la BD entre tests. Si cualquier test que use `registered_user` corre antes de `test_add_account_success`, la BD ya tiene `testuser` y el test falla. Este es el patrón clásico de **test order dependency**: los tests no son idempotentes ni aislados.
+
+#### Ejemplo 5 (segunda intervención): Lógica de autorización de dashboard sin tests
+
+```python
+# app/dashboard/views.py — línea 76
+@dashboard.route('/edit-quiz/<code>')
+@login_required
+def edit_quiz(code):
+    check = json_decoder(quiz.find_one({'code': code}))
+    if check and (session.get('username') == check['author'] or session.get('type') == 1):
+        # ... renderizar formulario de edición
+        return render_template('dashboard/add-quizes.html', forms=forms)
+    abort(403)  # ← esta rama nunca se ejecutaba en tests
+```
+
+**Problema**: La rama `abort(403)` — que protege el quiz de ser editado por un usuario que no es el autor ni admin — nunca se cubría. Un usuario ajeno podría acceder al quiz si se introdujera un bug en la condición y no habría test que lo detectara.
+
 ---
 
 ### 5.4 Tests implementados para reducir la deuda
 
-Se crearon **37 nuevos tests** distribuidos en 4 módulos:
+#### 5.4.1 Primera intervención — 37 tests nuevos
 
 | Módulo | Tests | Qué cubren |
 | :----- | :---: | :--------- |
@@ -437,16 +495,39 @@ Se crearon **37 nuevos tests** distribuidos en 4 módulos:
 | `tests/test_api_views.py` | 9 | Endpoints de usuario: registro, login, perfil, contraseña |
 | `tests/test_api_quiz.py` | 10 | Endpoints de quiz: creación, preguntas, puntaje, scores |
 
+#### 5.4.2 Segunda intervención — 39 tests nuevos
+
+Se crearon **3 nuevos módulos de test** para cubrir las áreas con mayor deuda remanente:
+
+| Módulo | Tests | Qué cubren |
+| :----- | :---: | :--------- |
+| `tests/test_dashboard_views.py` | 18 | Vistas de dashboard: autenticación, edición/eliminación de quiz, autorización por rol, logout, rutas duplicadas |
+| `tests/test_upload_csv.py` | 8 | Carga de archivos CSV y JSON: formato válido, campos faltantes, extensión incorrecta, sin archivo |
+| `tests/test_api_admin.py` | 13 | Operaciones admin: delete/promote/unpromote, cambio de contraseña, edición de perfil, visualización de quiz, flujos de error |
+
+**Áreas específicamente cubiertas por primera vez:**
+- `edit_quiz` con usuario propietario ✅, usuario ajeno (403) ✅, admin ✅
+- `delete_quiz` con código existente y no existente ✅
+- `logout` con verificación de sesión borrada ✅
+- `uploadCsv` con CSV válido, CSV inválido, JSON válido, JSON inválido ✅
+- `manage_users` (delete, promote, unpromote) ✅
+- `change_password` con contraseña correcta e incorrecta ✅
+- `edit_profile` con email duplicado ✅
+- `nilai` para quiz inexistente ✅
+
 ---
 
-### 5.5 Resultados después de la intervención
+### 5.5 Resultados después de cada intervención
 
-| Métrica | Antes | Después | Mejora |
-| :------ | :---: | :-----: | :----: |
-| Tests totales | 8 | **45** | +462% |
-| Cobertura de líneas | 5.8% | **64%** | +58.2pp |
-| Cobertura de branches | 0% | **13%+** | Desde cero |
-| Archivos con 100% cobertura | 2 | **12** | +10 |
+| Métrica | Inicial | 1ª intervención | 2ª intervención |
+| :------ | :-----: | :-------------: | :-------------: |
+| Tests totales | 8 | 45 | **84** |
+| Cobertura de líneas | 5.8% | 70.54% | **90%** |
+| Cobertura de branches | 0% | 29.59% | **~84%** |
+| Archivos con 100% cobertura | 2 | 12 | **16** |
+| `dashboard/views.py` cobertura | 0% | 46.94% | **85%** |
+| `api/quiz.py` cobertura | 0% | 57.72% | **85%** |
+| `api/views.py` cobertura | 0% | 63.83% | **90%** |
 
 ---
 
@@ -454,11 +535,11 @@ Se crearon **37 nuevos tests** distribuidos en 4 módulos:
 
 | Área | Descripción | Prioridad |
 | :--- | :---------- | :-------: |
-| `dashboard/views.py` (42%) | Vistas de dashboard con lógica de descarga, edición y eliminación de quizzes | Media |
-| `api/quiz.py` upload CSV/JSON | Flujos de carga de archivos con validación de formato | Media |
-| `api/quiz.py` search | Búsqueda por texto (requiere soporte de text index en mock) | Baja |
-| Tests de integración E2E | Flujos completos: registro → login → crear quiz → responder → ver scores | Alta |
-| Tests de frontend (JS) | `dashboard.js` y `script.js` no tienen tests | Media |
+| `test_add_account_success` — contaminación de BD | El fixture `registered_user` con `autouse=True` inserta `testuser` antes de que el test intente registrarlo. Solución: usar username único en el test o añadir limpieza de BD en `teardown`. | Alta |
+| `dashboard/views.py` — `download_quiz` | El endpoint de descarga usa una agregación de MongoDB que mongomock no soporta completamente. Requiere mock adicional o refactoring del endpoint. | Media |
+| `api/quiz.py` — búsqueda por texto | El endpoint `quiz_search` requiere índice de texto de MongoDB; mongomock tiene soporte limitado para `$text`. | Baja |
+| Tests de integración E2E | Flujos completos: registro → login → crear quiz → responder → ver scores con verificación end-to-end | Alta |
+| Tests de frontend (JS) | `dashboard.js` y `script.js` no tienen tests; el bug del operador `&` vs `&&` no está cubierto | Media |
 
 ---
 
@@ -467,3 +548,521 @@ Se crearon **37 nuevos tests** distribuidos en 4 módulos:
 *Este documento puede actualizarse conforme se apliquen refactorizaciones o se detecten nuevos puntos de deuda técnica.*
 
 </div>
+
+---
+
+## 📊 6. Developer Experience (DevEx) & Framework SPACE
+
+### 6.1 Developer Experience (DevEx)
+
+#### 6.1.1 Definición y contexto
+
+**Developer Experience (DevEx)** es el conjunto de factores que determinan qué tan fluida, eficiente y satisfactoria es la experiencia de un desarrollador al trabajar con una codebase, herramientas y procesos de desarrollo. Fue formalizado por GitHub en 2023 como un marco para medir la efectividad del desarrollo de software.
+
+El framework DevEx evalúa cuatro dimensiones:
+- **Feedback Loops**: Velocidad y calidad de la retroalimentación (compilación, tests, errores)
+- **Cognitive Load**: Cantidad de información que el desarrollador debe mantener en mente simultáneamente
+- **Flow State**: Capacidad del entorno para facilitar la concentración sostenida
+- **Tooling**: Calidad y ergonomía de las herramientas utilizadas
+
+#### 6.1.2 Análisis DevEx del proyecto
+
+##### ✅ Puntos Positivos
+
+| Área | Evidencia | Impacto en DevEx |
+| :--- | :-------- | :--------------- |
+| **CI/CD con GitHub Actions** | Workflow configurado en `.github/workflows/build.yml` con pytest, coverage y SonarCloud | Feedback loop automatizado; el desarrollador sabe inmediatamente si su código rompe algo |
+| **Testing infrastructure** | Suite de 84 tests con pytest, fixtures en `conftest.py`, mongomock para aislamiento | Reduce incertidumbre; permite modificar código con confianza |
+| **Cobertura de código** | 90% de cobertura de líneas, configuración en `.coveragerc` y `coverage.xml` | Feedback preciso sobre áreas no testeadas |
+| **Configuración por entornos** | `config.py` con Development, Production, Testing configs separados | Facilita transiciones entre contextos sin cambios de código |
+| **Blueprints modulares** | Flask Blueprints para auth, api, dashboard, main, quiz | Permite navegación clara del código; nuevo desarrollador encuentra dónde están las rutas |
+| **Dependencies minimalistas** | 36 dependencias en requirements.txt (Flask, PyMongo, pytest) | Curva de aprendizaje reducida; menos tecnología que dominar |
+| **Documentación existente** | README.md con features, screenshots, demo credentials | Bajo onboarding para nuevos contribuidores |
+| **SonarCloud configurado** | `sonar-project.properties` con organización y project key | Análisis estático automático; deuda técnica visible |
+| **Gitignore adecuado** | Excluye `__pycache__/`, `env/` | Reduce ruido en el repositorio |
+
+##### ❌ Puntos Negativos
+
+| Área | Problema | Impacto en DevEx |
+| :--- | :------- | :--------------- |
+| **Configuración manual de variables de entorno** | MONGODB_URI debe configurarse manualmente; no hay `.env.example` | Friction en onboarding; nuevo desarrollador tarda en levantar el proyecto |
+| **Deprecación no abordada** | `@app.before_first_request` (Flask 2.3+) y `os.urandom(12)` | Técnicamente funciona pero genera warnings; riesgo de rotura futura |
+| **Inconsistencia en respuestas API** | Alterna `status='fail'` y `status='failed'` | Dificultad para consumir la API; necesidad de manejar ambos casos |
+| **Errores expuestos al cliente** | `str(e)` en respuestas JSON de API | Riesgo de seguridad + developer frustration al depurar |
+| **Secretos hardcodeados en seed** | Admin credentials en `server.py:29` (`admin1`) | Si alguien sube esto, queda expuesto en historial de git |
+| **Sin pre-commit hooks** | No hay validación antes de commits | Código con typos/lint puede llegar a main |
+| **Typos en código** | `get_scorest`, `Unkown`, `unkown` | Confusión; afectan legibilidad y mantenimiento |
+| **Dependencias desactualizadas** | Flask 2.0.2 (2021), Werkzeug 2.0.2 | Vulnerabilidades conocidas; comportamiento inesperado con Python 3.11+ |
+| **Sin type hints** | Código sin annotaciones de tipo | Menor tooling (autocomplete, error checking); mayor carga cognitiva |
+| **Logs usando print** | `print('new index created ..')` en `api/quiz.py` | Difícil trazabilidad en producción; polución de output |
+
+##### 🔧 Oportunidades de Mejora DevEx
+
+| Mejora | Prioridad | Esfuerzo | Impacto |
+| :----- | :-------: | :------: | :------ |
+| Agregar `.env.example` con variables requeridas | Alta | Bajo | Elimina fricción de onboarding |
+| Crear script `scripts/setup.sh` para instalar deps + config inicial | Alta | Bajo | Automatiza primero 5 minutos del developer |
+| Implementar pre-commit hooks (ruff/flake8 + pytest) | Alta | Bajo | Previene código de baja calidad en CI |
+| Actualizar a Flask 3.x LTS | Media | Medio | Seguridad + nuevas features + mejor error messages |
+| Agregar type hints progresivamente | Media | Alto | Mejor tooling, autocomplete, menos bugs |
+| Centralizar manejo de errores API | Media | Bajo | Consistencia; mejor DX para consumir la API |
+| Reemplazar `print` por `app.logger` | Baja | Bajo | Trazabilidad en producción |
+| Documentar el flujo de datos con diagrams/ADR | Baja | Medio | Reduce carga cognitiva para nuevos devs |
+
+---
+
+### 6.2 Framework SPACE
+
+#### 6.2.1 Definición
+
+El framework **SPACE** (Forsman et al., 2021) mide la productividad del desarrollador en 5 dimensiones:
+- **S** — Satisfaction: Satisfacción del desarrollador con su trabajo y herramientas
+- **P** — Performance: Outcome medible del trabajo (velocity, bugs resueltos, features)
+- **A** — Activity: Medidas de actividad (commits, PRs, builds, tests)
+- **C** — Communication: Colaboración y teamwork
+- **E** — Efficiency: Qué tan bien se usan los recursos (caching, parallelization, flow)
+
+#### 6.2.2 Métricas Identificables para el Proyecto
+
+##### Satisfaction (S)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Tiempo hasta el primer commit significativo** | ~15-30 min (config manual) | Medir onboarding de nuevos devs | < 10 min |
+| **Frecuencia de bloqueos ("estoy atascado")** | Desconocido | Survey mensual | Reducir 30% |
+| **NPS del equipo sobre herramientas** | Desconocido | Survey trimestral | > 50 |
+| **Tasa de rotación de contexto** (switching entre tareas) | Alta (múltiples archivos sin service layer) | Telemetry / survey | < 5 switches/día |
+
+##### Performance (P)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Features completadas por sprint** | Desconocido | GitHub milestones | Baseline + 20% |
+| **Bugs en producción por release** | Desconocido | Bug tracker | < 3/release |
+| **Cobertura de código** | 90% | `pytest --cov` | Mantener > 85% |
+| **Debt ratio** (issues SonarCloud) | ~10% del código | SonarCloud | < 5% |
+| **MRR** (Mean Repair Time) para bugs | Desconocido | Ticket resolution time | < 4 horas |
+
+##### Activity (A)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Commits por semana** | ~2-3/semana (historial) | `git shortlog -sn --since="7 days"` | 5-10/semana |
+| **PRs merged por semana** | ~1-2/semana | GitHub insights | 3-5/semana |
+| **Tests ejecutados por día** | ~84 tests, 2-3 min | CI runs | Mantener o reducir tiempo |
+| **Build time** | ~2-3 min (CI) | GitHub Actions logs | < 2 min |
+| **Líneas de código escritas/eliminadas** | Net positivo (~50/week) | `git diff --stat` | Monitorear deuda técnica |
+
+##### Communication (C)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Tiempo de review de PRs** | Desconocido | GitHub PR metrics | < 24 horas |
+| **Reviewers por PR** | ~1 (comités limitados) | GitHub PR data | 2-3 |
+| ** Comentarios en código/documentación** | Limitado | Survey | > 50%覆盖率 |
+| **ADRs/decisiones arquitectónicas documentadas** | 0 | Archivos en `docs/` | > 5 ADRs |
+
+##### Efficiency (E)
+
+| Métrica | Estado Actual | Cómo medir | Meta sugerida |
+| :------- | :------------ | :--------- | :------------ |
+| **Costo de CI/CD por build** | ~$0 (GitHub Actions free tier) | GitHub Actions billing | Mantener |
+| **Test suite execution time** | ~2-3 min | `pytest --durations=10` | < 2 min |
+| **Tiempo de cold start** (setup dev environment) | ~15-30 min | Onboarding measurement | < 10 min |
+| **Cache hit ratio en CI** | Desconocido | GitHub Actions cache stats | > 70% |
+| **Parallelization en CI** | Parcial (tests secuenciales) | Workflow config | Tests paralelos |
+| **Ratio tiempo-coding / tiempo-configurando** | Bajo (~70/30) | Time tracking | > 80/20 |
+
+---
+
+### 6.3 Dashboard de Métricas DevEx + SPACE Sugerido
+
+```yaml
+# .github/ISSUE_TEMPLATES/devex-metric.yml
+
+DevEx & SPACE Metrics:
+  S - Satisfaction:
+    - First commit time: < 10 min
+    - Setup script available: Yes/No
+    - .env.example exists: Yes/No
+  
+  P - Performance:
+    - Test coverage: > 85%
+    - SonarQube issues: < 10 blockers
+    - Bug escape rate: < 5%
+  
+  A - Activity:
+    - Weekly commits: > 5
+    - PRs merged: > 3
+    - Build pass rate: > 95%
+  
+  C - Communication:
+    - Avg PR review time: < 24h
+    - PRs with 2+ reviewers: > 50%
+  
+  E - Efficiency:
+    - CI time: < 2 min
+    - Test suite time: < 2 min
+    - Cold start: < 10 min
+```
+
+---
+
+### 6.4 Plan de Implementación DevEx + SPACE
+
+#### Fase 1: Quick Wins (Semana 1-2)
+
+| Acción | Impacto | Métrica afectada |
+| :----- | :------ | :--------------- |
+| Crear `.env.example` | Onboarding | S (satisfaction) |
+| Agregar pre-commit hook con ruff | Code quality | P (performance) |
+| Script `scripts/setup.sh` | Onboarding | S (satisfaction), E (efficiency) |
+| Actualizar README con setup rápido | Onboarding | S (satisfaction) |
+| Corregir typos y `status='failed'` → `'fail'` | DX | E (efficiency) |
+
+#### Fase 2: Medium-term (Semana 3-6)
+
+| Acción | Impacto | Métrica afectada |
+| :----- | :------ | :--------------- |
+| Migrar a Flask 3.x con typing | Security + DX | P (performance), S (satisfaction) |
+| Implementar Service Layer | Maintainability | E (efficiency), S (satisfaction) |
+| Agregar GitHub Actions cache optimization | CI speed | E (efficiency), A (activity) |
+| Dashboard de métricas con GitHub Actions | Visibility | C (communication), P (performance) |
+| Integrar Slack/Teams para PR notifications | Communication | C (communication) |
+
+#### Fase 3: Long-term (Mes 2-3)
+
+| Acción | Impacto | Métrica afectada |
+| :----- | :------ | :--------------- |
+| Type hints en todo el codebase | DX + Reliability | S (satisfaction), P (performance) |
+| E2E tests con Playwright/Cypress | Quality | P (performance) |
+| Developer survey trimestral | Satisfaction | S (satisfaction) |
+| Architecture Decision Records (ADRs) | Knowledge sharing | C (communication) |
+| Onboarding documentation interactiva | Onboarding | S (satisfaction) |
+
+---
+
+### 6.5 Conclusiones y Recomendaciones Finales
+
+#### Fortalezas del proyecto en DevEx + SPACE:
+1. **Infraestructura de testing sólida** (84 tests, 90% coverage) — habilita confianza y productividad
+2. **CI/CD configurado** con SonarCloud — visibility sobre calidad
+3. **Estructura modular** con Blueprints — bajo acoplamiento, fácil navegación
+4. **Documentación básica** — reduce curva de aprendizaje
+
+#### Áreas críticas a mejorar:
+1. **Onboarding friction** — sin `.env.example` ni script de setup
+2. **Code quality tooling ausente** — sin pre-commit hooks, sin linter configurado
+3. **Métricas de equipo invisibles** — sin tracking de satisfaction, communication, o long-term performance
+4. **Actualización de dependencias** — Flask 2.0.2 (2021) con vulnerabilidades conocidas
+5. **Centralización de configuración** — SECRET_KEY en código, MONGODB_URI manual
+
+#### Inversión sugerida:
+- **40%** del tiempo en quick wins (Fase 1) — impacto inmediato en satisfaction
+- **35%** en tooling y automatización — impacto en efficiency y performance
+- **25%** en métricas y feedback loops — impacto en communication y long-term improvement
+
+---
+
+*Sección creada para la rama `DevEx`. Actualizar conforme se implementen mejoras.*
+
+---
+
+## 🏛️ 7. Architectural Smells
+
+### 7.1 Definición y marco de referencia
+
+Los **architectural smells** son problemas estructurales en la arquitectura del software que, si no se atienden, degradan progresivamente la mantenibilidad, la modularidad y la testabilidad del sistema. A diferencia de los code smells (que afectan funciones o clases), los architectural smells afectan componentes completos y sus interacciones.
+
+Este análisis sigue el catálogo establecido en:
+
+> Mumtaz, H., Singh, P., & Blincoe, K. (2020). *A Systematic Mapping Study on Architectural Smells Detection*. Journal of Systems and Software. https://doi.org/10.1016/j.jss.2020.110885
+
+El paper clasifica los smells en categorías: **Service**, **Performance**, **Dependency**, **Package**, **MVC**, **Component** y **Other smells**. Los smells detectados en este proyecto pertenecen principalmente a las categorías MVC, Dependency y Component, coherente con que la aplicación sigue un estilo arquitectural de capas sobre Flask Blueprints.
+
+El documento detallado con evidencias completas se encuentra en `Architectural Debt/ArchitecturalSmells.md`.
+
+---
+
+### 7.2 Smells identificados
+
+#### AS-01 · Scattered Functionality
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC |
+| **Calidad afectada** | Mantenibilidad, Cohesión |
+| **Severidad** | 🔴 Alta |
+
+**Descripción:** Una funcionalidad que debería residir en un único componente se encuentra dispersa en múltiples módulos. La **lógica de autorización** (decidir si un usuario puede ver o modificar un quiz) aparece duplicada en al menos cinco puntos del código sin ninguna capa de servicios intermedia:
+
+```python
+# dashboard/views.py — línea 56
+author = {'$exists':True} if session.get('type') == 1 else session.get('username')
+
+# dashboard/views.py — línea 81
+if check and (session.get('username') == check['author'] or session.get('type') == 1):
+
+# dashboard/views.py — línea 113
+if result.get('author') == session.get('username') or session.get('type') == 1:
+
+# api/quiz.py — línea 50
+if check and (session.get('username') == check['author'] or session.get('type') == 1):
+
+# api/quiz.py — línea 106
+author = {'$exists':True} if session.get('type') == 1 else session.get('username')
+```
+
+**Archivos afectados:** `app/dashboard/views.py` (líneas 56, 81, 113), `app/api/quiz.py` (líneas 50, 106), `app/auth/forms.py` (líneas 60–65), `app/dashboard/forms.py` (línea 29).
+
+**Impacto:** Cualquier cambio en la política de autorización (p.ej. añadir un nuevo rol) requiere modificar todos los puntos manualmente, con alto riesgo de inconsistencia.
+
+**Refactoring sugerido:** Crear `app/services/auth_service.py` con funciones `is_quiz_author_or_admin(quiz_doc, session)` y `get_author_filter(session)`.
+
+---
+
+#### AS-02 · God Component / Concern Overload
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC / Component |
+| **Calidad afectada** | Mantenibilidad, Cohesión, Modificabilidad |
+| **Severidad** | 🔴 Alta |
+
+**Descripción:** El Blueprint `api` actúa como un **God Component**: concentra responsabilidades de capas distintas en una sola función. La función `nilai()` en `api/quiz.py` (líneas 57–97) mezcla en ~40 líneas: parsing de la request, lógica de negocio (cálculo de puntaje), dos accesos a la base de datos y formateo de la respuesta HTTP.
+
+```python
+# api/quiz.py — función nilai() (fragmento ilustrativo)
+def nilai(code):
+    check = json_decoder(quiz.find_one({'code':code}))      # acceso a BD
+    json_request = request.get_json()                       # parsing HTTP
+    list_true = [...]                                       # lógica de negocio
+    fix_value = round(len(list_true) * per_true)            # cálculo de puntaje
+    user = json_decoder(db.users.find_one({...}))           # segundo acceso a BD
+    db.score.insert_one(json_decoder(data_value))           # escritura a BD
+    return jsonify(status='success', data=data_value)       # respuesta HTTP
+```
+
+**Archivos afectados:** `app/api/quiz.py` (función `nilai`, líneas 57–97), `app/api/views.py` (funciones `add_account`, `edit_profile`).
+
+**Impacto:** Los módulos de API no pueden ser probados unitariamente sin instanciar toda la pila Flask + MongoDB. Añadir nuevas reglas de negocio exige entender todo el flujo mezclado.
+
+**Refactoring sugerido:** Introducir `app/services/quiz_service.py` con `calculate_score`, `submit_answers`, `find_quiz_by_code`, y `app/services/user_service.py`. Las vistas solo orquestan request → servicio → response.
+
+---
+
+#### AS-03 · Cyclic Dependency
+
+| | |
+| :--- | :--- |
+| **Categoría** | Dependency |
+| **Calidad afectada** | Mantenibilidad, Modularidad, Testabilidad |
+| **Severidad** | 🔴 Alta |
+
+**Descripción:** Existe una **dependencia circular** entre el módulo de aplicación y el módulo de base de datos. El ciclo se forma así:
+
+```
+app/__init__.py  ──importa──▶  app/modules/utils.py  ──importa──▶  app/modules/mongo.py
+      ▲                                                                        │
+      └───────────────────  app/db.py  ──importa──▶  app  ────────────────────┘
+                            (from app import mongo_utils)
+```
+
+`app/db.py` ejecuta `mongo_utils.get_db()` **en tiempo de importación**, lo que hace que el estado de `app/__init__.py` deba estar completamente inicializado antes de que cualquier otro módulo importe `db`. Además, `app/__init__.py` importa `Mongo_Utils` desde `utils.py` en lugar de desde `mongo.py`, creando una ruta de dependencia innecesariamente larga.
+
+```python
+# app/__init__.py — línea 2
+from .modules.utils import Mongo_Utils   # ← debería importar desde .modules.mongo
+
+# app/db.py — líneas 1–4
+from app import mongo_utils
+db, quiz = mongo_utils.get_db()          # ← efecto secundario en tiempo de importación
+```
+
+**Archivos afectados:** `app/__init__.py` (línea 2), `app/db.py` (líneas 1–4), `app/modules/utils.py` (línea 4).
+
+**Impacto:** Fragilidad en el orden de importación; el ciclo es la causa raíz de los problemas con el mock de MongoDB en los tests (deuda de testing práctica #7, §5.2.1).
+
+**Refactoring sugerido:** Importar `Mongo_Utils` directamente desde `app.modules.mongo`; reemplazar `app/db.py` por una función `get_db()` lazy que no ejecute código en tiempo de importación; eliminar el re-export de `Mongo_Utils` desde `utils.py`.
+
+---
+
+#### AS-04 · Abstraction without Decoupling
+
+| | |
+| :--- | :--- |
+| **Categoría** | Component |
+| **Calidad afectada** | Mantenibilidad, Reusabilidad, Testabilidad |
+| **Severidad** | 🔴 Alta |
+
+**Descripción:** Los módulos de **alto nivel** de la arquitectura (vistas, formularios) importan directamente el módulo de bajo nivel de acceso a datos, sin ninguna abstracción intermedia. No existe capa de repositorio ni de servicio:
+
+```python
+from app.db import db, quiz   # en api/views.py, api/quiz.py, dashboard/views.py
+from app.db import db         # en auth/forms.py y dashboard/forms.py
+```
+
+**Cinco módulos de capas distintas** dependen del mismo objeto de infraestructura. El caso más crítico ocurre en los formularios WTForms, que acceden a la base de datos dentro de sus validadores — la capa de presentación realizando acceso directo a datos sin intermediario:
+
+```python
+# auth/forms.py — línea 60 (dentro de un validador de formulario)
+def validate_username(self, username):
+    if db.users.find_one({'username':username.data}):
+        raise ValidationError('Username already registered')
+```
+
+**Archivos afectados:** `app/api/views.py` (línea 8), `app/api/quiz.py` (línea 7), `app/dashboard/views.py` (línea 11), `app/auth/forms.py` (líneas 16, 60, 64), `app/dashboard/forms.py` (líneas 5, 29).
+
+**Impacto:** Cambiar el motor de base de datos exigiría modificar todos los archivos que referencian `db.*` directamente. Los formularios no pueden instanciarse ni probarse sin una conexión activa a MongoDB.
+
+**Refactoring sugerido:** Crear repositorios o servicios (`UserRepository`, `QuizRepository`) como abstracción; los formularios deben recibir la función de validación como dependencia inyectada, no importar `db` directamente.
+
+---
+
+#### AS-05 · Sloppy Delegation
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC |
+| **Calidad afectada** | Cohesión, Claridad |
+| **Severidad** | 🟡 Media |
+
+**Descripción:** El módulo `app/modules/utils.py` realiza una **delegación inadecuada**: mezcla utilidades puras (hash, generación de códigos, serialización JSON) con la clase de infraestructura `Mongo_Utils`, re-exportándola sin justificación aparente. Además contiene una importación duplicada de `ObjectId`:
+
+```python
+# app/modules/utils.py
+from bson.objectid import ObjectId   # línea 3 — primera importación
+from .mongo import Mongo_Utils       # línea 4 — re-export que no corresponde aquí
+...
+from bson import ObjectId            # línea 8 — importación duplicada
+```
+
+Como resultado, `app/__init__.py` importa `Mongo_Utils` desde `utils` en lugar de desde `mongo`, creando la ruta de dependencia que origina AS-03.
+
+**Archivos afectados:** `app/modules/utils.py` (líneas 3, 4, 8), `app/__init__.py` (línea 2).
+
+**Refactoring sugerido:** Separar en tres módulos con responsabilidad única: `security.py` (funciones de contraseña), `utils.py` (solo utilidades puras), `mongo.py` (ya existe, debe ser la única fuente de `Mongo_Utils`).
+
+---
+
+#### AS-06 · Ambiguous Interface
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC / Other smells |
+| **Calidad afectada** | Usabilidad de la API, Consistencia |
+| **Severidad** | 🟡 Media |
+
+**Descripción:** La interfaz pública de la API REST presenta **contratos ambiguos** en múltiples dimensiones:
+
+| Problema | Ejemplo en el código |
+| :------- | :------------------- |
+| Valor de `status` en error alterna entre `'fail'` y `'failed'` | `api/views.py` líneas 42, 63; `api/quiz.py` líneas 117 |
+| Clave del mensaje alterna entre `errors` y `message` | `api/views.py` líneas 44, 87 vs. 63, 99 |
+| Exposición de detalles internos al cliente | `api/views.py` línea 44: `errors='<p>{}'.format(e)` |
+| Typo en nombre de función/endpoint | `api/quiz.py` línea 100: `get_scorest` en lugar de `get_scores` |
+
+**Archivos afectados:** `app/api/views.py` (líneas 42, 44, 63, 87, 113, 116), `app/api/quiz.py` (líneas 32, 55, 97, 100, 117).
+
+**Refactoring sugerido:** Definir constantes `API_STATUS_SUCCESS`/`API_STATUS_FAIL` en `app/api/constants.py`; unificar la clave de mensaje a `message`; crear un helper `api_error(message, code=400)`; documentar el contrato con esquema OpenAPI.
+
+---
+
+#### AS-07 · Feature Concentration
+
+| | |
+| :--- | :--- |
+| **Categoría** | MVC |
+| **Calidad afectada** | Mantenibilidad, Modularidad |
+| **Severidad** | 🟡 Media |
+
+**Descripción:** El archivo `app/api/quiz.py` (206 líneas) concentra **cinco áreas funcionales distintas** sin separación: creación/edición de quizzes, cálculo y almacenamiento de puntajes, consulta de scores, búsqueda de quizzes y carga masiva CSV/JSON. Adicionalmente, `dashboard/views.py` contiene dos rutas que renderizan exactamente el mismo template:
+
+```python
+# dashboard/views.py — rutas duplicadas
+@dashboard.route('/scores')
+def scores():
+    return render_template('dashboard/users-scores.html')   # mismo template
+
+@dashboard.route('/users-scores')
+def users_scores():
+    return render_template('dashboard/users-scores.html')   # mismo template
+```
+
+**Archivos afectados:** `app/api/quiz.py` (8 funciones con responsabilidades heterogéneas), `app/dashboard/views.py` (líneas 117–126).
+
+**Refactoring sugerido:** Dividir el Blueprint `api` en sub-módulos: `api/users.py`, `api/quizzes.py`, `api/scores.py`. Eliminar la ruta duplicada manteniendo solo una o redirigiendo desde la otra.
+
+---
+
+#### AS-08 · Implicit Cross-module Dependency
+
+| | |
+| :--- | :--- |
+| **Categoría** | Dependency |
+| **Calidad afectada** | Testabilidad, Robustez |
+| **Severidad** | 🟠 Media-Alta |
+
+**Descripción:** Existen **dependencias implícitas de estado global** que no se declaran en las firmas de las funciones: la sesión de Flask (`session`) y las variables globales `db`/`quiz` se consumen directamente desde cualquier función sin recibirlos como parámetros. Además, `server.py` usa `@app.before_first_request` (deprecado desde Flask 2.3) como mecanismo de inicialización, creando una dependencia implícita de orden de arranque:
+
+```python
+# server.py — línea 12
+@app.before_first_request   # ← deprecado en Flask 2.3
+def seed_data():
+    cek = db.users.find_one({})   # falla silenciosamente si MongoDB no está disponible
+```
+
+**Archivos afectados:** `app/db.py` (líneas 1–4), `server.py` (línea 12), múltiples funciones en `dashboard/views.py` y `api/quiz.py` que consumen `session` como dependencia implícita.
+
+**Impacto:** Las dependencias implícitas son la causa directa de los problemas de aislamiento en los tests documentados en §5.2.1 (práctica #7) y §5.2.2 (práctica #8). En producción, si MongoDB no está disponible al inicio, la aplicación falla con errores crípticos en lugar de un mensaje claro.
+
+**Refactoring sugerido:** Reemplazar `@app.before_first_request` por un comando Flask CLI (`flask seed-admin`); encapsular el acceso a `session` en funciones utilitarias; reemplazar las variables globales `db`/`quiz` por una función `get_db()` lazy.
+
+---
+
+### 7.3 Resumen y priorización
+
+| # | Smell | Categoría | Severidad | Esfuerzo |
+| :-: | :---- | :-------- | :-------: | :------: |
+| AS-01 | Scattered Functionality | MVC | 🔴 Alta | Medio |
+| AS-02 | God Component / Concern Overload | MVC / Component | 🔴 Alta | Alto |
+| AS-03 | Cyclic Dependency | Dependency | 🔴 Alta | Medio |
+| AS-04 | Abstraction without Decoupling | Component | 🔴 Alta | Alto |
+| AS-05 | Sloppy Delegation | MVC | 🟡 Media | Bajo |
+| AS-06 | Ambiguous Interface | MVC | 🟡 Media | Bajo |
+| AS-07 | Feature Concentration | MVC | 🟡 Media | Bajo–Medio |
+| AS-08 | Implicit Cross-module Dependency | Dependency | 🟠 Media-Alta | Medio |
+
+**Orden de atención recomendado:**
+
+| Prioridad | Smell | Justificación |
+| :-------: | :---- | :------------ |
+| 🔴 **1** | **AS-03 Cyclic Dependency** | Problema estructural de arranque; resuelve riesgos de `ImportError` en tests y producción |
+| 🔴 **2** | **AS-04 Abstraction without Decoupling** | Habilita tests unitarios reales; es precondición para resolver AS-01 y AS-02 |
+| 🔴 **3** | **AS-01 Scattered Functionality** | Una vez que existe capa de servicios (AS-04), centralizar autorización es directo |
+| 🟡 **4** | **AS-06 Ambiguous Interface** | Esfuerzo bajo, impacto inmediato en consistencia del contrato API |
+| 🟡 **5** | **AS-05 Sloppy Delegation** | Limpieza de `utils.py`, elimina origen del ciclo AS-03 |
+| 🟡 **6** | **AS-07 Feature Concentration** | División de módulos de API; paralelizable con AS-05 |
+| 🟢 **7** | **AS-02 God Component** | Requiere la capa de servicios (AS-04) como prerequisito |
+| 🟢 **8** | **AS-08 Implicit Dependency** | Paralelizable con AS-03 y AS-04 |
+
+---
+
+### 7.4 Relación con deuda técnica y DevEx
+
+Los architectural smells no son problemas aislados: amplifican la deuda técnica documentada en las secciones anteriores y degradan la DevEx medida con el framework SPACE:
+
+| Architectural Smell | Impacto en Deuda Técnica (§1–§5) | Impacto en DevEx / SPACE (§6) |
+| :------------------ | :-------------------------------- | :---------------------------- |
+| AS-01 Scattered Functionality | Duplicación de lógica (§1.2, §4.2.2 DRY) | Cognitive Load alto: cambio de política exige tocar N archivos |
+| AS-02 God Component | SOLID-S violado (§4.2.1); `nilai()` sin tests (§5.3 Ejemplo 1) | Flow State interrumpido: funciones de 40+ líneas difíciles de navegar |
+| AS-03 Cyclic Dependency | Mock de MongoDB frágil (§5.2.1 práctica #7) | Feedback Loop lento: tests fallan por orden de importación |
+| AS-04 Abstraction sin Decoupling | SOLID-D violado (§4.2.1); formularios con acceso a BD (§1.2) | Efficiency baja: imposible testear formularios sin BD activa |
+| AS-05 Sloppy Delegation | Imports duplicados en `utils.py` (§1.4) | Cognitive Load: `utils.py` mezcla infraestructura y utilidades |
+| AS-06 Ambiguous Interface | Inconsistencia `'fail'`/`'failed'` (§1.3, §2.1) | Satisfaction baja: frontend debe manejar ambos valores de estado |
+| AS-07 Feature Concentration | Rutas duplicadas (§2.9, §4.2.2 DRY) | Cognitive Load: 8 responsabilidades en un solo archivo |
+| AS-08 Implicit Dependency | `@before_first_request` deprecado (§1.1); contaminación en tests (§5.2.2 práctica #8) | Feedback Loop: fallos crípticos al arrancar sin MongoDB |
+
+---
+
+*Sección creada para la rama `DevEx`. Referencia completa con evidencias de código en `Architectural Debt/ArchitecturalSmells.md`.*
