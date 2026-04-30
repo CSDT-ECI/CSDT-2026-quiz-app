@@ -1,0 +1,9 @@
+# Commits listed here are ignored by `git blame` so bulk mechanical rewrites
+# don't bury the real authorship of each line.
+#
+# Local users opt in once with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub's web UI applies this file automatically.
+
+# chore: renormalize CRLF files to LF (2026-04-30)
+f46640c
