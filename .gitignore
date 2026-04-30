@@ -4,3 +4,6 @@ __pycache__/
 coverage.xml
 htmlcov/
 .pytest_cache/
+
+# Local Claude Code runtime (per-developer, not for the repo)
+.remember/
