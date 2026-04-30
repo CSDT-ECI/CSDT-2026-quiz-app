@@ -51,40 +51,36 @@ Cada sección abre con una de las imágenes generadas. La estructura es siempre 
 
 ### 📦 Quiz App
 
-Aplicación web para **crear, responder y calificar cuestionarios** con panel administrativo y autenticación de usuarios.
+App web para **crear, responder y calificar cuestionarios** con panel admin y autenticación.
 
-#### Stack técnico
+#### Stack
 
-- **Backend:** Python 3 · Flask · Blueprints
-- **Base de datos:** MongoDB (PyMongo)
-- **Frontend:** HTML + Jinja templates · jQuery · AJAX
-- **Auth:** Flask-Login · WTForms · CSRFProtect
-- **Despliegue original:** Heroku
+- **Backend:** Python · Flask + Blueprints
+- **BD:** MongoDB (PyMongo)
+- **Frontend:** Jinja + jQuery + AJAX
+- **Auth:** Flask-Login · WTForms · CSRF
 
 #### Origen
 
-Codebase **forkeada** desde [`gibran-abdillah/quiz-app`](https://github.com/gibran-abdillah/quiz-app) — proyecto educativo público. Nuestro trabajo es el **análisis y refactorización**, no la creación inicial.
+Codebase **forkeada** de [`gibran-abdillah/quiz-app`](https://github.com/gibran-abdillah/quiz-app). Nuestro trabajo: **análisis y refactorización**.
 
 </div>
 <div class="col">
 
-### 🎯 Funcionalidades principales
+### 🎯 Funcionalidades
 
-- **Quizzes:** crear · editar · eliminar · buscar
-- **Importación masiva** desde CSV o JSON
-- **Responder quiz** con cálculo de puntaje (0–100)
-- **Scores:** ver propios · autores ven los de sus quizzes
-- **Autenticación:** registro · login · cambio de contraseña
-- **Panel admin:**
-  - bulk delete de usuarios
-  - bulk promote / unpromote a admin
-- **REST API** paralela a las vistas web
+- **Quizzes:** CRUD + búsqueda
+- **Importación** desde CSV o JSON
+- **Responder** con cálculo de puntaje (0–100)
+- **Scores** propios + del autor
+- **Auth:** registro, login, cambio de pwd
+- **Admin:** bulk delete / promote / unpromote
+- **REST API** paralela a las vistas
 
-#### 📊 Tamaño del codebase
+#### 📊 Tamaño
 
-- **5 Blueprints** (auth · api · dashboard · main · quiz)
-- **~500 líneas** de código en `app/` (sin tests)
-- **8 → 84 tests** tras nuestras intervenciones
+- **5 Blueprints** · ~500 LOC en `app/`
+- **8 → 84 tests** tras 2 intervenciones
 
 </div>
 </div>
