@@ -26,6 +26,7 @@ Bienvenida y presentación del equipo. La imagen muestra el "taller" del equipo:
 
 | § | Tema | Imagen guía |
 | :-: | :--- | :--- |
+| 0 | **Contexto** — la app que analizamos | — |
 | 1 | **Code smells** detectados | Especímenes en frasco |
 | 2 | **Técnicas de refactorización** propuestas | Máquina refactorizadora |
 | 3 | **Priorización** impacto vs esfuerzo | Matriz steampunk |
@@ -36,6 +37,60 @@ Bienvenida y presentación del equipo. La imagen muestra el "taller" del equipo:
 
 Note:
 Cada sección abre con una de las imágenes generadas. La estructura es siempre la misma: encontramos X → proponemos Y. Resultado neto al final: lo que cambió y lo que sigue pendiente.
+
+---
+
+<!-- .slide: class="content" -->
+
+<div class="slide-eyebrow">§ 0 · Contexto</div>
+
+## La aplicación que analizamos
+
+<div class="two-col">
+<div class="col">
+
+### 📦 Quiz App
+
+Aplicación web para **crear, responder y calificar cuestionarios** con panel administrativo y autenticación de usuarios.
+
+#### Stack técnico
+
+- **Backend:** Python 3 · Flask · Blueprints
+- **Base de datos:** MongoDB (PyMongo)
+- **Frontend:** HTML + Jinja templates · jQuery · AJAX
+- **Auth:** Flask-Login · WTForms · CSRFProtect
+- **Despliegue original:** Heroku
+
+#### Origen
+
+Codebase **forkeada** desde [`gibran-abdillah/quiz-app`](https://github.com/gibran-abdillah/quiz-app) — proyecto educativo público. Nuestro trabajo es el **análisis y refactorización**, no la creación inicial.
+
+</div>
+<div class="col">
+
+### 🎯 Funcionalidades principales
+
+- **Quizzes:** crear · editar · eliminar · buscar
+- **Importación masiva** desde CSV o JSON
+- **Responder quiz** con cálculo de puntaje (0–100)
+- **Scores:** ver propios · autores ven los de sus quizzes
+- **Autenticación:** registro · login · cambio de contraseña
+- **Panel admin:**
+  - bulk delete de usuarios
+  - bulk promote / unpromote a admin
+- **REST API** paralela a las vistas web
+
+#### 📊 Tamaño del codebase
+
+- **5 Blueprints** (auth · api · dashboard · main · quiz)
+- **~500 líneas** de código en `app/` (sin tests)
+- **8 → 84 tests** tras nuestras intervenciones
+
+</div>
+</div>
+
+Note:
+Antes de hablar de smells y refactor, alinear sobre qué app estamos analizando. Es un proyecto educativo de Quiz App: profesores crean quizzes, estudiantes los responden, admins gestionan usuarios. La codebase venía forkeada de un repo público — nuestro aporte es el análisis riguroso y las dos intervenciones de refactor/testing. Stack típico de Flask: Blueprints, MongoDB, jQuery en el frontend. Entender este alcance ayuda a calibrar las expectativas: no es un microservicio enterprise, es una app educativa de tamaño contenido — pero con suficiente complejidad para mostrar todos los principios de Clean Code, refactoring, testing y arquitectura que estudiamos en el curso.
 
 ---
 
