@@ -1,0 +1,553 @@
+/* ──────────────────────────────────────────────
+   Anti-Spaghetti-Squad · Steampunk skin for reveal.js
+   Palette derived from the team's generated imagery:
+   warm walnut wood, aged brass, parchment, electric cyan.
+   ────────────────────────────────────────────── */
+
+:root {
+  --asq-bg: #1a1410;
+  --asq-bg-alt: #2a1f17;
+  --asq-bg-card: #3a2c20;
+  --asq-brass: #c9a449;
+  --asq-brass-dim: #8a7030;
+  --asq-brass-deep: #6a5020;
+  --asq-parchment: #e8d9b8;
+  --asq-parchment-dim: #b8a888;
+  --asq-cyan: #4ec9d6;
+  --asq-cyan-dim: #2e8a96;
+  --asq-red: #c93c3c;
+  --asq-yellow: #d4b840;
+  --asq-green: #5a8c3e;
+  --asq-line: rgba(201, 164, 73, 0.25);
+}
+
+/* ─── Base ─────────────────────────────────────── */
+
+.reveal {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-weight: 400;
+  color: var(--asq-parchment);
+  font-size: 32px;
+}
+
+.reveal-viewport,
+body {
+  background: var(--asq-bg);
+}
+
+.reveal .slides {
+  text-align: left;
+}
+
+.reveal .slides > section,
+.reveal .slides > section > section {
+  padding: 0 !important;
+  height: 100%;
+}
+
+/* ─── Headings ─────────────────────────────────── */
+
+.reveal h1,
+.reveal h2,
+.reveal h3,
+.reveal h4 {
+  font-family: 'Cormorant Garamond', 'Iowan Old Style', Georgia, serif;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.01em;
+  color: var(--asq-brass);
+  text-shadow: none;
+  margin: 0 0 0.6em 0;
+  line-height: 1.15;
+}
+
+.reveal h1 { font-size: 2.4em; }
+.reveal h2 { font-size: 1.7em; }
+.reveal h3 { font-size: 1.2em; color: var(--asq-parchment); }
+.reveal h4 { font-size: 1.0em; color: var(--asq-cyan); font-weight: 500; }
+
+.reveal h2::after {
+  content: "";
+  display: block;
+  width: 3em;
+  height: 2px;
+  background: var(--asq-brass);
+  margin-top: 0.4em;
+  opacity: 0.7;
+}
+
+/* ─── Body text ────────────────────────────────── */
+
+.reveal p,
+.reveal li {
+  font-size: 0.72em;
+  line-height: 1.4;
+  color: var(--asq-parchment);
+  margin: 0 0 0.35em 0;
+}
+
+.reveal strong { color: var(--asq-brass); font-weight: 600; }
+.reveal em     { color: var(--asq-cyan); font-style: normal; }
+
+.reveal a {
+  color: var(--asq-cyan);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--asq-cyan-dim);
+}
+.reveal a:hover {
+  color: var(--asq-parchment);
+  border-bottom-color: var(--asq-parchment);
+}
+
+.reveal ul,
+.reveal ol {
+  margin-left: 1.2em;
+  display: block;
+}
+
+.reveal ul li::marker { color: var(--asq-brass); }
+.reveal ol li::marker { color: var(--asq-brass); font-weight: 600; }
+
+/* ─── Section opener slides (full-bleed image) ─── */
+
+section.opener {
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+
+section.opener::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg,
+    rgba(26, 20, 16, 0.15) 0%,
+    rgba(26, 20, 16, 0.45) 55%,
+    rgba(26, 20, 16, 0.85) 100%);
+  pointer-events: none;
+}
+
+section.opener .opener-content {
+  position: absolute;
+  bottom: 8%;
+  left: 6%;
+  right: 6%;
+  z-index: 2;
+}
+
+section.opener h1,
+section.opener h2 {
+  color: var(--asq-parchment);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85), 0 0 18px rgba(0, 0, 0, 0.55);
+  margin: 0;
+}
+
+section.opener .eyebrow {
+  display: inline-block;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.6em;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--asq-brass);
+  background: rgba(26, 20, 16, 0.7);
+  padding: 0.3em 0.8em;
+  border: 1px solid var(--asq-brass-dim);
+  margin-bottom: 0.6em;
+}
+
+/* ─── Content slides ──────────────────────────── */
+
+section.content {
+  padding: 3.2% 5% !important;
+  background: linear-gradient(180deg, var(--asq-bg) 0%, var(--asq-bg-alt) 100%);
+  display: flex !important;
+  flex-direction: column;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+section.content > * {
+  flex: 0 0 auto;
+}
+
+section.content .slide-eyebrow {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.5em;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--asq-brass-dim);
+  margin-bottom: 0.3em;
+}
+
+section.content h2 {
+  margin-bottom: 0.35em;
+}
+
+section.content h2::after {
+  margin-top: 0.25em;
+}
+
+section.content h3 {
+  margin: 0.2em 0 0.4em 0;
+}
+
+section.content h4 {
+  margin: 0.6em 0 0.25em 0;
+}
+
+section.content ul,
+section.content ol {
+  margin: 0 0 0.4em 1.2em;
+}
+
+section.content small {
+  display: block;
+  margin-top: 0.5em;
+  font-size: 0.55em;
+  color: var(--asq-parchment-dim);
+}
+
+/* ─── Tables ──────────────────────────────────── */
+
+.reveal table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.58em;
+  margin: 0.3em 0;
+  background: rgba(58, 44, 32, 0.4);
+}
+
+.reveal table th {
+  background: var(--asq-brass-deep);
+  color: var(--asq-parchment);
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 600;
+  font-size: 1.05em;
+  text-align: left;
+  padding: 0.4em 0.7em;
+  border: none;
+  border-bottom: 2px solid var(--asq-brass);
+}
+
+.reveal table td {
+  padding: 0.35em 0.7em;
+  border: none;
+  border-bottom: 1px solid var(--asq-line);
+  vertical-align: top;
+  color: var(--asq-parchment);
+  line-height: 1.35;
+}
+
+.reveal table tr:last-child td { border-bottom: none; }
+
+.reveal table code {
+  background: rgba(26, 20, 16, 0.7);
+  color: var(--asq-cyan);
+  padding: 0.05em 0.35em;
+  border-radius: 2px;
+  font-size: 0.92em;
+}
+
+/* ─── Code blocks ─────────────────────────────── */
+
+.reveal pre {
+  width: 100%;
+  background: var(--asq-bg);
+  border: 1px solid var(--asq-brass-dim);
+  border-left: 3px solid var(--asq-brass);
+  border-radius: 2px;
+  font-size: 0.55em;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  margin: 0.6em 0;
+}
+
+.reveal pre code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  padding: 1em 1.2em;
+  max-height: none;
+  line-height: 1.45;
+}
+
+.reveal code {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--asq-cyan);
+}
+
+/* ─── Found / Proposed pair layout ────────────── */
+
+.found-fix {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.4em;
+  margin-top: 0.4em;
+}
+
+.found-fix .col {
+  background: rgba(26, 20, 16, 0.55);
+  border: 1px solid var(--asq-line);
+  padding: 0.75em 1em;
+  border-top: 3px solid var(--asq-brass-dim);
+}
+
+.found-fix .col.found {
+  border-top-color: var(--asq-red);
+}
+
+.found-fix .col.fix {
+  border-top-color: var(--asq-cyan);
+}
+
+.found-fix h4 {
+  margin: 0 0 0.5em 0;
+  font-size: 0.7em;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.found-fix .col.found h4 { color: var(--asq-red); }
+.found-fix .col.fix   h4 { color: var(--asq-cyan); }
+
+.found-fix ul { margin-left: 1em; }
+
+.found-fix li {
+  font-size: 0.68em;
+  margin-bottom: 0.2em;
+  line-height: 1.35;
+}
+
+/* ─── Metric / hero stat callouts ─────────────── */
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.2em;
+  margin: 0.8em 0;
+}
+
+.metric {
+  background: rgba(26, 20, 16, 0.6);
+  border: 1px solid var(--asq-brass-dim);
+  border-top: 3px solid var(--asq-brass);
+  padding: 0.7em 0.7em;
+  text-align: center;
+}
+
+.metric .label {
+  font-size: 0.55em;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--asq-parchment-dim);
+  margin-bottom: 0.4em;
+}
+
+.metric .value {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.9em;
+  font-weight: 600;
+  color: var(--asq-brass);
+  line-height: 1;
+}
+
+.metric .delta {
+  font-size: 0.5em;
+  color: var(--asq-cyan);
+  margin-top: 0.3em;
+}
+
+.metric.headline .value { color: var(--asq-cyan); font-size: 2.4em; }
+
+/* ─── Lists with severity / status badges ─────── */
+
+.reveal .badge {
+  display: inline-block;
+  font-size: 0.7em;
+  font-weight: 600;
+  padding: 0.1em 0.55em;
+  border-radius: 2px;
+  margin-right: 0.4em;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
+.reveal .badge.high   { background: var(--asq-red);  color: #fff; }
+.reveal .badge.medium { background: var(--asq-yellow); color: #1a1410; }
+.reveal .badge.low    { background: var(--asq-green); color: #fff; }
+.reveal .badge.tag    { background: var(--asq-brass-deep); color: var(--asq-parchment); }
+
+/* ─── Smell card grid for AS-01 .. AS-08 ──────── */
+
+.smells-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6em;
+  margin-top: 0.4em;
+}
+
+.smell-card {
+  background: rgba(26, 20, 16, 0.6);
+  border: 1px solid var(--asq-line);
+  border-left: 3px solid var(--asq-brass);
+  padding: 0.5em 0.7em;
+  font-size: 0.6em;
+  line-height: 1.3;
+}
+
+.smell-card.high { border-left-color: var(--asq-red); }
+.smell-card.med  { border-left-color: var(--asq-yellow); }
+
+.smell-card .id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
+  color: var(--asq-cyan);
+  display: block;
+  margin-bottom: 0.2em;
+}
+
+.smell-card .name {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.05em;
+  color: var(--asq-brass);
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.3em;
+}
+
+.smell-card .desc {
+  color: var(--asq-parchment);
+  line-height: 1.35;
+}
+
+/* ─── Two-column layouts (✅ / ❌) ──────────────── */
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.4em;
+  margin-top: 0.4em;
+}
+
+.two-col .col h3 {
+  font-size: 0.95em;
+  margin-bottom: 0.35em;
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid var(--asq-line);
+}
+
+.two-col .col.good h3 { color: var(--asq-green); }
+.two-col .col.bad  h3 { color: var(--asq-red); }
+
+.two-col li {
+  font-size: 0.66em;
+  line-height: 1.35;
+  margin-bottom: 0.22em;
+}
+
+.two-col p {
+  font-size: 0.66em;
+  line-height: 1.4;
+  margin: 0 0 0.4em 0;
+}
+
+.two-col h4 {
+  margin: 0.5em 0 0.2em 0;
+  font-size: 0.78em;
+}
+
+/* ─── Title slide ─────────────────────────────── */
+
+section.title {
+  background-size: cover !important;
+  background-position: center !important;
+}
+
+section.title::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg,
+    rgba(26, 20, 16, 0.05) 0%,
+    rgba(26, 20, 16, 0.25) 60%,
+    rgba(26, 20, 16, 0.85) 100%);
+}
+
+section.title .title-content {
+  position: absolute;
+  bottom: 6%;
+  left: 6%;
+  right: 6%;
+  z-index: 2;
+}
+
+section.title h1 {
+  font-size: 2em;
+  color: var(--asq-parchment);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.85);
+  margin-bottom: 0.3em;
+}
+
+section.title .meta {
+  font-size: 0.7em;
+  color: var(--asq-parchment-dim);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+section.title .meta strong { color: var(--asq-brass); font-weight: 600; }
+
+/* ─── Closing slide ───────────────────────────── */
+
+section.closing {
+  padding: 8% 6% !important;
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(201, 164, 73, 0.15) 0%, transparent 60%),
+    var(--asq-bg);
+  text-align: center;
+}
+
+section.closing h1 {
+  font-size: 2.6em;
+  margin-bottom: 0.3em;
+}
+
+section.closing .closing-meta {
+  margin-top: 1.2em;
+  font-size: 0.7em;
+  color: var(--asq-parchment-dim);
+}
+
+section.closing .closing-meta a {
+  color: var(--asq-cyan);
+  border-bottom: 1px dotted var(--asq-cyan-dim);
+}
+
+/* ─── Reveal navigation chrome ────────────────── */
+
+.reveal .controls {
+  color: var(--asq-brass);
+}
+
+.reveal .progress {
+  color: var(--asq-brass);
+  height: 3px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.reveal .slide-number {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8em;
+  color: var(--asq-brass-dim);
+  background: rgba(26, 20, 16, 0.7);
+  padding: 0.3em 0.6em;
+}
+
+/* ─── Speaker notes (visible in static viewing) ─ */
+
+.reveal aside.notes {
+  display: none;
+}
+
+/* ─── Print: PDF export ───────────────────────── */
+
+@media print {
+  .reveal aside.notes { display: none; }
+}
