@@ -24,16 +24,16 @@ Bienvenida y presentación del equipo. La imagen muestra el "taller" del equipo:
 
 ## Recorrido de la charla
 
-| § | Tema | Imagen guía |
-| :-: | :--- | :--- |
-| 0 | **Contexto** — la app que analizamos | — |
-| 1 | **Code smells** detectados | Especímenes en frasco |
-| 2 | **Técnicas de refactorización** propuestas | Máquina refactorizadora |
-| 3 | **Priorización** impacto vs esfuerzo | Matriz steampunk |
-| 4 | **Clean Code & XP** — qué cumplimos, qué no | Taller multinivel |
-| 5 | **Deuda en testing** — el viaje 5.8 % → 90 % | Estación de remediación |
-| 6 | **DevEx + SPACE** — métricas de equipo | Bastidor de medidores |
-| 7 | **Architectural smells** — 8 hallazgos AS-01..AS-08 | Sala arquitectónica |
+| § | Tema |
+| :-: | :--- |
+| 0 | **Contexto** — la app que analizamos |
+| 1 | **Code smells** detectados |
+| 2 | **Técnicas de refactorización** propuestas |
+| 3 | **Priorización** impacto vs esfuerzo |
+| 4 | **Clean Code & XP** — qué cumplimos, qué no |
+| 5 | **Deuda en testing** — el viaje 5.8 % → 90 % |
+| 6 | **DevEx + SPACE** — métricas de equipo |
+| 7 | **Architectural smells** — 8 hallazgos AS-01..AS-08 |
 
 Note:
 Cada sección abre con una de las imágenes generadas. La estructura es siempre la misma: encontramos X → proponemos Y. Resultado neto al final: lo que cambió y lo que sigue pendiente.
@@ -162,6 +162,8 @@ $.post({ url: ..., data: ... });
 $.ajax({ url, data }).done(...)
 // sin .fail() — el usuario no recibe feedback si la red falla
 ```
+
+<br/>
 
 **Impacto:** falsos positivos en navegación, errores AJAX silenciosos, comportamiento impredecible cuando `path_name.length` no es exactamente 3.
 
