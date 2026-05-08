@@ -1,0 +1,30 @@
+# Enforce LF line endings on every platform.
+# Overrides each contributor's core.autocrlf setting (notably Git for Windows defaults to true).
+
+* text=auto eol=lf
+
+# Belt-and-suspenders for files where CRLF would break execution or tooling.
+*.py     text eol=lf
+*.sh     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+*.cfg    text eol=lf
+*.ini    text eol=lf
+*.toml   text eol=lf
+*.properties text eol=lf
+*.json   text eol=lf
+.coveragerc  text eol=lf
+.gitignore   text eol=lf
+.gitattributes text eol=lf
+
+# Binary files — never modify line endings.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary

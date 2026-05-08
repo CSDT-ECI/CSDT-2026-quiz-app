@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'">
+  <title>Anti-Spaghetti-Squad · Análisis de deuda técnica · CSDT 2026</title>
+  <meta name="description" content="Presentación del análisis de deuda técnica, refactorización, Clean Code, testing, DevEx y architectural smells para la Quiz App del curso CSDT 2026.">
+
+  <link rel="stylesheet" href="assets/css/fonts.css">
+
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css"
+        integrity="sha384-AJKv9Ui5SfA0VsFksFI9GuA1ztX9Ca3CLP6HGfX4YY/tYSVodC+PUszaQZFIlkuy"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css"
+        integrity="sha384-YgvgKeZJykuztG+iQPoZHNZENTFZvOcOJ/uRzmJTje6GHYN9zAw+y5rx/L8MQKA/"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css" id="theme"
+        integrity="sha384-rGf1FAL+Buyw4LpDboONln7P/UqlyCftbnLG8bC6nNAaW3LcuHtUg5t5KYY3U+L8"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css"
+        integrity="sha384-0rrWATPYzlkqxkUhsXu1QkrO6K3rq4d6FqJQhcCJ7jQcZhb6plkpODMjpoiAYidE"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer">
+  <link rel="stylesheet" href="assets/css/steampunk.css">
+</head>
+
+<body>
+  <div class="reveal">
+    <div class="slides">
+      <section data-markdown="slides.md"
+               data-separator="^\n---\n$"
+               data-separator-vertical="^\n--\n$"
+               data-separator-notes="^Note:"
+               data-charset="utf-8">
+      </section>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"
+          integrity="sha384-M/JtqCVlLcK9lwVnBnMXP0V577CBULkjodKsR/PITOe4MSKNbbwqCemEyluOw0+5"
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/markdown/markdown.js"
+          integrity="sha384-ee/QmFMUwC+YUuswSDzliKj27Anp3rSblE1ujBcPKyrzwG15Daa1GL6JcNbPg/oG"
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"
+          integrity="sha384-NUSGSUaJDMJ4EYNyUIGbV/meNnf3WqIvGfjqD3BDJdvWEI3K/zrL38QWB52JLIMW"
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"
+          integrity="sha384-vGIe90H8q0nlnrw/zr9vn+r39OtjvzBfai9voOybn5Bx+KmKLtSxhM+YIfcrsfI3"
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer"></script>
+
+  <script src="assets/js/init.js"></script>
+</body>
+</html>
